@@ -35,14 +35,6 @@ pub struct ViewportCells {
     pub cols: usize,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct SelectionRect {
-    pub x: f32,
-    pub y: f32,
-    pub width: f32,
-    pub height: f32,
-}
-
 #[derive(Clone, Debug, Default)]
 pub struct SelectionState {
     pub anchor: Option<TextPoint>,
@@ -88,29 +80,38 @@ impl SelectionState {
 pub struct TextLayout {
     line_starts: Vec<usize>,
     line_lengths: Vec<usize>,
+    line_column_bytes: Vec<Vec<usize>>,
 }
 
 impl TextLayout {
     pub fn from_text(text: &str) -> Self {
         let mut line_starts = vec![0usize];
         let mut line_lengths = Vec::new();
-        let mut current_col = 0usize;
+        let mut line_column_bytes = vec![vec![0usize]];
 
         for (i, ch) in text.char_indices() {
             if ch == '\n' {
-                line_lengths.push(current_col);
-                line_starts.push(i + ch.len_utf8());
-                current_col = 0;
-            } else {
-                current_col += 1;
+                let current_len = line_column_bytes
+                    .last()
+                    .map_or(0, |line| line.len().saturating_sub(1));
+                line_lengths.push(current_len);
+                let next_start = i + ch.len_utf8();
+                line_starts.push(next_start);
+                line_column_bytes.push(vec![next_start]);
+            } else if let Some(current_line) = line_column_bytes.last_mut() {
+                current_line.push(i + ch.len_utf8());
             }
         }
 
-        line_lengths.push(current_col);
+        let current_len = line_column_bytes
+            .last()
+            .map_or(0, |line| line.len().saturating_sub(1));
+        line_lengths.push(current_len);
 
         Self {
             line_starts,
             line_lengths,
+            line_column_bytes,
         }
     }
 
@@ -138,8 +139,11 @@ impl TextLayout {
 
     pub fn point_to_byte(&self, point: TextPoint) -> usize {
         let p = self.clamp_point(point);
-        let start = self.line_starts[p.line];
-        start + p.column
+        self.line_column_bytes
+            .get(p.line)
+            .and_then(|line| line.get(p.column))
+            .copied()
+            .unwrap_or_else(|| self.line_starts[p.line])
     }
 
     pub fn byte_to_point(&self, byte: usize) -> TextPoint {
@@ -148,11 +152,19 @@ impl TextLayout {
         }
 
         let idx = self.line_starts.partition_point(|start| *start <= byte);
-        let line = idx.saturating_sub(1).min(self.line_count().saturating_sub(1));
-        let column = byte.saturating_sub(self.line_starts[line]).min(self.line_len(line));
+        let line = idx
+            .saturating_sub(1)
+            .min(self.line_count().saturating_sub(1));
+        let line_cols = &self.line_column_bytes[line];
+        let line_start = *line_cols.first().unwrap_or(&0);
+        let line_end = *line_cols.last().unwrap_or(&line_start);
+        let clamped = byte.clamp(line_start, line_end);
+        let column = line_cols
+            .partition_point(|b| *b <= clamped)
+            .saturating_sub(1)
+            .min(self.line_len(line));
         TextPoint { line, column }
     }
-
 }
 
 pub fn screen_to_text_point(
@@ -186,13 +198,13 @@ pub fn hover_char_index(
     layout.point_to_byte(point)
 }
 
-pub fn selection_rects(
+pub fn selection_byte_ranges_in_viewport(
     selection: &SelectionState,
     layout: &TextLayout,
-    metrics: TextMetrics,
     scroll: ScrollOffset,
     viewport: ViewportCells,
-) -> Vec<SelectionRect> {
+    viewport_text: &str,
+) -> Vec<Range<usize>> {
     let Some((start, end)) = selection.normalized() else {
         return Vec::new();
     };
@@ -202,7 +214,10 @@ pub fn selection_rects(
     let first_visible_col = scroll.column;
     let last_visible_col = scroll.column + viewport.cols;
 
-    let mut rects = Vec::new();
+    let viewport_layout = TextLayout::from_text(viewport_text);
+    let viewport_lines = viewport_layout.line_count();
+
+    let mut ranges = Vec::new();
     for line in start.line..=end.line {
         if line < first_visible_line || line > last_visible_line {
             continue;
@@ -221,19 +236,28 @@ pub fn selection_rects(
             continue;
         }
 
-        let x = metrics.left_padding
-            + metrics.gutter_width
-            + ((sel_start_col - first_visible_col) as f32 * metrics.glyph_width);
-        let y = metrics.top_padding + ((line - first_visible_line) as f32 * metrics.line_height);
-        let width = (sel_end_col - sel_start_col) as f32 * metrics.glyph_width;
+        let local_line = line - first_visible_line;
+        if local_line >= viewport_lines {
+            continue;
+        }
 
-        rects.push(SelectionRect {
-            x,
-            y,
-            width,
-            height: metrics.line_height,
+        let local_start_col = sel_start_col.saturating_sub(first_visible_col);
+        let local_end_col = sel_end_col.saturating_sub(first_visible_col);
+
+        let start_byte = viewport_layout.point_to_byte(TextPoint {
+            line: local_line,
+            column: local_start_col,
         });
+        let end_byte = viewport_layout.point_to_byte(TextPoint {
+            line: local_line,
+            column: local_end_col,
+        });
+
+        if start_byte < end_byte {
+            ranges.push(start_byte..end_byte);
+        }
     }
 
-    rects
+    ranges
 }
+use std::ops::Range;

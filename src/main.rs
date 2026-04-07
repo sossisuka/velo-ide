@@ -2,7 +2,9 @@ mod ui;
 
 use std::path::PathBuf;
 
-use gpui::{size, App, AppContext, Application, Bounds, TitlebarOptions, WindowBounds, WindowOptions, px};
+use gpui::{
+    px, size, App, AppContext, Application, Bounds, TitlebarOptions, WindowBounds, WindowOptions,
+};
 use ui::app::{Icons, VeloIde};
 
 fn main() {

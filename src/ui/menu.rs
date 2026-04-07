@@ -222,4 +222,3 @@ pub const TOP_MENUS: &[TopMenu] = &[
         items: VIEW_ITEMS,
     },
 ];
-

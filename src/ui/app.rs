@@ -1,20 +1,28 @@
-﻿use crate::ui::{
-    highlight::syntax_highlighted_text,
-    language::language_and_icon_for,
+use crate::ui::{
+    controller::{resolve_editor_key_action, AppMenuAction, EditorKeyAction},
+    core::EditorCore,
+    editor_commands, editor_geometry,
+    editor_io::{self, CopySelectionResult, CutSelectionResult, PasteResult},
+    editor_runtime::{self, CoreKeyApply},
+    editor_view::compute_editor_view,
+    explorer_view::compute_explorer_view,
+    file_text::decode_text_file,
     menu::{MenuCommand, MenuItem, TopMenu, TopMenuId, TOP_MENUS},
-    selection::{self, ScrollOffset, SelectionState, TextLayout, TextMetrics, TextPoint, ViewportCells},
+    scroll::scrollbar_metrics,
+    selection::{self, ScrollOffset, TextLayout, TextMetrics, ViewportCells},
+    workspace::{FileEntry, VisibleKind, WorkspaceState},
+    workspace_io::{self, OpenFileResult, SaveResult},
 };
 use std::{
-    collections::HashSet,
     fs,
     path::{Path, PathBuf},
 };
 
 use gpui::{
-    div, img, px, rgb, AnyElement, ClickEvent, Context, FocusHandle,
-    InteractiveElement, IntoElement, KeyDownEvent, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, ParentElement, Render, ScrollDelta, ScrollWheelEvent,
-    SharedString, StatefulInteractiveElement, Styled, Window,
+    div, img, px, rgb, AnyElement, ClickEvent, Context, FocusHandle, HighlightStyle,
+    InteractiveElement, IntoElement, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, ParentElement, Render, ScrollDelta, ScrollWheelEvent, SharedString,
+    StatefulInteractiveElement, Styled, StyledText, Window,
 };
 
 #[derive(Clone)]
@@ -33,10 +41,6 @@ impl Icons {
         self.base.join(format!("{name}.svg"))
     }
 
-    fn file(&self) -> PathBuf {
-        self.by_name("file")
-    }
-
     fn folder(&self) -> PathBuf {
         self.by_name("folder")
     }
@@ -45,47 +49,29 @@ impl Icons {
         self.by_name("folder_open")
     }
 
-    fn run(&self) -> PathBuf {
-        self.by_name("cli")
-    }
-
     fn settings(&self) -> PathBuf {
         self.by_name("editorconfig")
     }
-}
 
-#[derive(Clone)]
-struct FileEntry {
-    abs_path: PathBuf,
-    rel_path: SharedString,
-    name: SharedString,
-    language: &'static str,
-    icon_name: &'static str,
-}
+    fn activity_explorer(&self) -> PathBuf {
+        self.by_name("activity_explorer")
+    }
 
-#[derive(Clone)]
-enum NodeKind {
-    Folder { children: Vec<TreeNode> },
-    File { file_idx: usize },
-}
+    fn activity_search(&self) -> PathBuf {
+        self.by_name("activity_search")
+    }
 
-#[derive(Clone)]
-struct TreeNode {
-    abs_path: PathBuf,
-    name: SharedString,
-    kind: NodeKind,
-}
+    fn activity_source_control(&self) -> PathBuf {
+        self.by_name("activity_source_control")
+    }
 
-#[derive(Clone)]
-enum VisibleKind {
-    Folder { abs_path: PathBuf, name: SharedString, expanded: bool },
-    File { file_idx: usize },
-}
+    fn activity_run(&self) -> PathBuf {
+        self.by_name("activity_run")
+    }
 
-#[derive(Clone)]
-struct VisibleEntry {
-    depth: usize,
-    kind: VisibleKind,
+    fn activity_extensions(&self) -> PathBuf {
+        self.by_name("activity_extensions")
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -96,9 +82,9 @@ enum Screen {
 
 const EDITOR_LINE_HEIGHT: f32 = 18.0;
 const EDITOR_GLYPH_WIDTH: f32 = 8.2;
-const EDITOR_LEFT_PADDING: f32 = 8.0;
-const EDITOR_TOP_PADDING: f32 = 8.0;
-const EDITOR_GUTTER_WIDTH: f32 = 60.0;
+const EDITOR_LEFT_PADDING: f32 = 0.0;
+const EDITOR_TOP_PADDING: f32 = 0.0;
+const EDITOR_GUTTER_WIDTH: f32 = 0.0;
 const MENU_BAR_HEIGHT: f32 = 28.0;
 const MENU_BUTTON_WIDTH: f32 = 92.0;
 const MENU_ITEM_HEIGHT: f32 = 28.0;
@@ -109,12 +95,7 @@ pub struct VeloIde {
     screen: Screen,
     editor_focus: FocusHandle,
 
-    project_root: Option<PathBuf>,
-    files: Vec<FileEntry>,
-    tree: Vec<TreeNode>,
-    expanded_folders: HashSet<PathBuf>,
-    open_tabs: Vec<usize>,
-    active_index: Option<usize>,
+    workspace: WorkspaceState,
     sidebar_width: f32,
     resizing_sidebar: bool,
     resize_start_x: f32,
@@ -122,14 +103,12 @@ pub struct VeloIde {
     explorer_scroll: f32,
     editor_scroll: f32,
     editor_hscroll: f32,
+    tab_scroll: usize,
 
-    editor_text: String,
-    cursor_byte: usize,
-    selection: SelectionState,
+    core: EditorCore,
     hover_byte: Option<usize>,
     open_menu: Option<TopMenuId>,
     open_submenu: Option<&'static str>,
-    is_dirty: bool,
     status: SharedString,
 }
 
@@ -152,12 +131,7 @@ impl VeloIde {
             icons,
             screen: Screen::Welcome,
             editor_focus: cx.focus_handle(),
-            project_root: None,
-            files: Vec::new(),
-            tree: Vec::new(),
-            expanded_folders: HashSet::new(),
-            open_tabs: Vec::new(),
-            active_index: None,
+            workspace: WorkspaceState::default(),
             sidebar_width: 300.0,
             resizing_sidebar: false,
             resize_start_x: 0.0,
@@ -165,202 +139,59 @@ impl VeloIde {
             explorer_scroll: 0.0,
             editor_scroll: 0.0,
             editor_hscroll: 0.0,
-            editor_text: String::new(),
-            cursor_byte: 0,
-            selection: SelectionState::default(),
+            tab_scroll: 0,
+            core: EditorCore::new(),
             hover_byte: None,
             open_menu: None,
             open_submenu: None,
-            is_dirty: false,
             status: "Ready".into(),
         }
     }
 
     fn open_project_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(folder) = rfd::FileDialog::new().set_title("Open Project Folder").pick_folder() {
+        if let Some(folder) = rfd::FileDialog::new()
+            .set_title("Open Project Folder")
+            .pick_folder()
+        {
             self.load_project(folder, window, cx);
         }
     }
 
     fn load_project(&mut self, root: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
-        let mut acc = Vec::new();
-        let tree = Self::build_tree(&root, &root, &mut acc, 0, 4000);
-
-        self.project_root = Some(root.clone());
-        self.files = acc;
-        self.tree = tree;
-        self.expanded_folders.clear();
-        self.expanded_folders.insert(root.clone());
-        self.open_tabs.clear();
-        self.active_index = None;
-        self.editor_text.clear();
-        self.cursor_byte = 0;
-        self.selection.clear();
+        self.workspace.load_project_index(root.clone(), 4000);
+        self.core.clear();
         self.hover_byte = None;
         self.editor_scroll = 0.0;
         self.editor_hscroll = 0.0;
-        self.is_dirty = false;
+        self.tab_scroll = 0;
         self.screen = Screen::Editor;
         self.status = format!(
             "Opened project: {} ({} files)",
             root.display(),
-            self.files.len()
+            self.workspace.files.len()
         )
         .into();
 
-        if !self.files.is_empty() {
+        if !self.workspace.files.is_empty() {
             self.open_file_at(0, window, cx);
         }
 
         cx.notify();
     }
 
-    fn build_tree(
-        base: &Path,
-        dir: &Path,
-        files: &mut Vec<FileEntry>,
-        depth: usize,
-        max_files: usize,
-    ) -> Vec<TreeNode> {
-        if depth > 32 || files.len() >= max_files {
-            return Vec::new();
-        }
-
-        let Ok(entries) = fs::read_dir(dir) else {
-            return Vec::new();
-        };
-
-        let mut folders = Vec::new();
-        let mut leaf_files = Vec::new();
-
-        for entry in entries.flatten() {
-            if files.len() >= max_files {
-                break;
-            }
-
-            let path = entry.path();
-            let name = entry.file_name().to_string_lossy().to_string();
-
-            if path.is_dir() {
-                if matches!(name.as_str(), ".git" | "node_modules" | "target" | ".idea") {
-                    continue;
-                }
-                let children = Self::build_tree(base, &path, files, depth + 1, max_files);
-                folders.push(TreeNode {
-                    abs_path: path,
-                    name: name.into(),
-                    kind: NodeKind::Folder { children },
-                });
-                continue;
-            }
-
-            let Some(rel_path) = path
-                .strip_prefix(base)
-                .ok()
-                .map(|p| p.to_string_lossy().replace('\\', "/"))
-            else {
-                continue;
-            };
-            let (language, icon_name) = language_and_icon_for(&path);
-            let file_idx = files.len();
-
-            files.push(FileEntry {
-                abs_path: path,
-                rel_path: rel_path.into(),
-                name: name.clone().into(),
-                language,
-                icon_name,
-            });
-            leaf_files.push(TreeNode {
-                abs_path: files[file_idx].abs_path.clone(),
-                name: name.into(),
-                kind: NodeKind::File { file_idx },
-            });
-        }
-
-        folders.sort_by(|a, b| a.name.to_string().cmp(&b.name.to_string()));
-        leaf_files.sort_by(|a, b| a.name.to_string().cmp(&b.name.to_string()));
-        folders.extend(leaf_files);
-        folders
-    }
-
-    fn toggle_folder(&mut self, folder: &Path, cx: &mut Context<Self>) {
-        let key = folder.to_path_buf();
-        if self.expanded_folders.contains(&key) {
-            self.expanded_folders.remove(&key);
-        } else {
-            self.expanded_folders.insert(key);
-        }
-        cx.notify();
-    }
-
-    fn visible_entries(&self) -> Vec<VisibleEntry> {
-        let mut out = Vec::new();
-        Self::flatten_visible(&self.tree, 0, &self.expanded_folders, &mut out);
-        out
-    }
-
-    fn flatten_visible(
-        nodes: &[TreeNode],
-        depth: usize,
-        expanded: &HashSet<PathBuf>,
-        out: &mut Vec<VisibleEntry>,
-    ) {
-        for node in nodes {
-            match &node.kind {
-                NodeKind::Folder { children } => {
-                    let is_expanded = expanded.contains(&node.abs_path);
-                    out.push(VisibleEntry {
-                        depth,
-                        kind: VisibleKind::Folder {
-                            abs_path: node.abs_path.clone(),
-                            name: node.name.clone(),
-                            expanded: is_expanded,
-                        },
-                    });
-                    if is_expanded {
-                        Self::flatten_visible(children, depth + 1, expanded, out);
-                    }
-                }
-                NodeKind::File { file_idx } => out.push(VisibleEntry {
-                    depth,
-                    kind: VisibleKind::File { file_idx: *file_idx },
-                }),
-            }
-        }
-    }
-
     fn open_file_at(&mut self, idx: usize, window: &mut Window, cx: &mut Context<Self>) {
-        if idx >= self.files.len() {
-            return;
-        }
-
-        let path = self.files[idx].abs_path.clone();
-        match fs::read(&path) {
-            Ok(bytes) => {
-                let content = String::from_utf8_lossy(&bytes).into_owned();
-                let had_replacements = bytes.iter().any(|b| *b == 0) || content.contains('\u{FFFD}');
-                self.active_index = Some(idx);
-                self.editor_text = content;
-                self.cursor_byte = 0;
-                self.selection.clear();
+        match workspace_io::open_file_into_editor(&mut self.workspace, &mut self.core, idx) {
+            OpenFileResult::InvalidIndex => {}
+            OpenFileResult::OpenFailed(err) => {
+                self.status = format!("Open failed: {}", err).into();
+            }
+            OpenFileResult::Opened { status } => {
                 self.hover_byte = None;
                 self.editor_scroll = 0.0;
                 self.editor_hscroll = 0.0;
-                if let Some(existing_pos) = self.open_tabs.iter().position(|tab| *tab == idx) {
-                    self.open_tabs.remove(existing_pos);
-                }
-                self.open_tabs.push(idx);
-                self.is_dirty = false;
-                self.status = if had_replacements {
-                    format!("Opened {} (lossy decode)", self.files[idx].rel_path).into()
-                } else {
-                    format!("Opened {}", self.files[idx].rel_path).into()
-                };
+                self.tab_scroll = self.workspace.open_tabs.len().saturating_sub(6);
+                self.status = status.into();
                 window.focus(&self.editor_focus);
-            }
-            Err(err) => {
-                self.status = format!("Open failed: {}", err).into();
             }
         }
 
@@ -368,20 +199,15 @@ impl VeloIde {
     }
 
     fn save_active_file(&mut self, cx: &mut Context<Self>) {
-        let Some(idx) = self.active_index else {
-            self.status = "No file selected".into();
-            cx.notify();
-            return;
-        };
-
-        let path = self.files[idx].abs_path.clone();
-        match fs::write(&path, &self.editor_text) {
-            Ok(_) => {
-                self.is_dirty = false;
-                self.status = format!("Saved {}", self.files[idx].rel_path).into();
+        match workspace_io::save_active_file(&self.workspace, &mut self.core) {
+            SaveResult::NoFileSelected => {
+                self.status = "No file selected".into();
             }
-            Err(err) => {
+            SaveResult::SaveFailed(err) => {
                 self.status = format!("Save failed: {}", err).into();
+            }
+            SaveResult::Saved { status } => {
+                self.status = status.into();
             }
         }
 
@@ -431,16 +257,6 @@ impl VeloIde {
         cx.notify();
     }
 
-    fn explorer_window(&self, total: usize, visible: usize) -> (usize, usize) {
-        let visible = visible.max(1);
-        if total <= visible {
-            return (0, total);
-        }
-        let max_start = total.saturating_sub(visible);
-        let start = self.explorer_scroll.floor().clamp(0.0, max_start as f32) as usize;
-        (start, (start + visible).min(total))
-    }
-
     fn scroll_editor(&mut self, event: &ScrollWheelEvent, cx: &mut Context<Self>) {
         let (dx, dy) = match event.delta {
             ScrollDelta::Lines(p) => (p.x, p.y),
@@ -462,63 +278,6 @@ impl VeloIde {
         cx.notify();
     }
 
-    fn editor_window(&self, total: usize, visible: usize) -> (usize, usize) {
-        let visible = visible.max(1);
-        if total <= visible {
-            return (0, total);
-        }
-        let max_start = total.saturating_sub(visible);
-        let start = self.editor_scroll.floor().clamp(0.0, max_start as f32) as usize;
-        (start, (start + visible).min(total))
-    }
-
-    fn editor_h_window(&self, total_cols: usize, visible_cols: usize) -> (usize, usize) {
-        let visible_cols = visible_cols.max(1);
-        if total_cols <= visible_cols {
-            return (0, total_cols);
-        }
-        let max_start = total_cols.saturating_sub(visible_cols);
-        let start = self.editor_hscroll.floor().clamp(0.0, max_start as f32) as usize;
-        (start, (start + visible_cols).min(total_cols))
-    }
-
-    fn slice_line_by_cols(line: &str, start_col: usize, end_col: usize) -> String {
-        line.chars()
-            .skip(start_col)
-            .take(end_col.saturating_sub(start_col))
-            .collect()
-    }
-
-    fn editor_text_layout(&self) -> TextLayout {
-        TextLayout::from_text(&self.editor_text)
-    }
-
-    fn editor_viewport_cells(&self, window: &Window) -> ViewportCells {
-        let viewport_w = f32::from(window.viewport_size().width);
-        let viewport_h = f32::from(window.viewport_size().height);
-        let rows = (((viewport_h - 180.0) / EDITOR_LINE_HEIGHT).floor() as usize).clamp(12, 140);
-        let cols = (((viewport_w - self.sidebar_width - 170.0) / EDITOR_GLYPH_WIDTH).floor()
-            as usize)
-            .clamp(24, 320);
-        ViewportCells { rows, cols }
-    }
-
-    fn editor_scroll_offset(&self, layout: &TextLayout, viewport: ViewportCells) -> ScrollOffset {
-        let max_line_start = layout.line_count().saturating_sub(viewport.rows.max(1));
-        let max_col_start = layout.max_line_len().saturating_sub(viewport.cols.max(1));
-
-        ScrollOffset {
-            line: self
-                .editor_scroll
-                .floor()
-                .clamp(0.0, max_line_start as f32) as usize,
-            column: self
-                .editor_hscroll
-                .floor()
-                .clamp(0.0, max_col_start as f32) as usize,
-        }
-    }
-
     fn editor_text_metrics(&self) -> TextMetrics {
         TextMetrics {
             line_height: EDITOR_LINE_HEIGHT,
@@ -530,10 +289,22 @@ impl VeloIde {
     }
 
     fn hit_test_editor(&self, x: f32, y: f32, window: &Window) -> (TextLayout, usize) {
-        let layout = self.editor_text_layout();
-        let viewport = self.editor_viewport_cells(window);
-        let scroll = self.editor_scroll_offset(&layout, viewport);
-        let byte = selection::hover_char_index(x, y, self.editor_text_metrics(), scroll, &layout);
+        let layout = self.core.layout();
+        let viewport = editor_geometry::viewport_cells(
+            f32::from(window.viewport_size().width),
+            f32::from(window.viewport_size().height),
+            self.sidebar_width,
+            EDITOR_LINE_HEIGHT,
+            EDITOR_GLYPH_WIDTH,
+        );
+        let scroll = editor_geometry::scroll_offset(
+            self.editor_scroll,
+            self.editor_hscroll,
+            &layout,
+            viewport,
+        );
+        let byte =
+            editor_geometry::hit_test_byte(x, y, self.editor_text_metrics(), scroll, &layout);
         (layout, byte)
     }
 
@@ -543,15 +314,15 @@ impl VeloIde {
         window: &Window,
         cx: &mut Context<Self>,
     ) {
-        if self.active_index.is_none() || event.button != MouseButton::Left {
+        if self.workspace.active_index.is_none() || event.button != MouseButton::Left {
             return;
         }
         let x = f32::from(event.position.x);
         let y = f32::from(event.position.y);
         let (layout, byte) = self.hit_test_editor(x, y, window);
         let point = layout.byte_to_point(byte);
-        self.cursor_byte = byte;
-        self.selection.begin_drag(point);
+        self.core.cursor_byte = byte;
+        self.core.selection.begin_drag(point);
         self.hover_byte = Some(byte);
         self.refresh_status();
         cx.notify();
@@ -563,7 +334,7 @@ impl VeloIde {
         window: &Window,
         cx: &mut Context<Self>,
     ) {
-        if self.active_index.is_none() {
+        if self.workspace.active_index.is_none() {
             return;
         }
         let x = f32::from(event.position.x);
@@ -574,9 +345,9 @@ impl VeloIde {
             self.hover_byte = Some(byte);
         }
 
-        if self.selection.dragging && event.dragging() {
-            self.cursor_byte = byte;
-            self.selection.update_drag(layout.byte_to_point(byte));
+        if self.core.selection.dragging && event.dragging() {
+            self.core.cursor_byte = byte;
+            self.core.selection.update_drag(layout.byte_to_point(byte));
             self.refresh_status();
             cx.notify();
         }
@@ -588,177 +359,83 @@ impl VeloIde {
         _window: &Window,
         cx: &mut Context<Self>,
     ) {
-        if event.button != MouseButton::Left || !self.selection.dragging {
+        if event.button != MouseButton::Left || !self.core.selection.dragging {
             return;
         }
-        self.selection.end_drag();
+        self.core.selection.end_drag();
         self.refresh_status();
         cx.notify();
     }
 
-    fn scrollbar_metrics(
-        total: usize,
-        visible: usize,
-        start: usize,
-        track_h: f32,
-    ) -> (f32, f32, bool) {
-        if total <= visible || total == 0 {
-            return (track_h, 0.0, false);
-        }
-
-        let ratio = (visible as f32 / total as f32).clamp(0.08, 1.0);
-        let thumb_h = (track_h * ratio).max(18.0).min(track_h);
-        let max_start = total.saturating_sub(visible) as f32;
-        let progress = (start as f32 / max_start).clamp(0.0, 1.0);
-        let thumb_top = (track_h - thumb_h) * progress;
-        (thumb_h, thumb_top, true)
-    }
-
-    fn clamp_cursor_to_boundary(&mut self) {
-        if self.cursor_byte > self.editor_text.len() {
-            self.cursor_byte = self.editor_text.len();
-        }
-        while self.cursor_byte > 0 && !self.editor_text.is_char_boundary(self.cursor_byte) {
-            self.cursor_byte -= 1;
-        }
-    }
-
-    fn insert_at_cursor(&mut self, text: &str) {
-        self.clamp_cursor_to_boundary();
-        self.editor_text.insert_str(self.cursor_byte, text);
-        self.cursor_byte += text.len();
-        self.is_dirty = true;
-    }
-
-    fn delete_backspace(&mut self) {
-        self.clamp_cursor_to_boundary();
-        if self.cursor_byte == 0 {
+    fn undo_edit(&mut self, cx: &mut Context<Self>) {
+        if !self.core.undo() {
+            self.status = "Nothing to undo".into();
+            cx.notify();
             return;
         }
-        let prev = self.editor_text[..self.cursor_byte]
-            .char_indices()
-            .next_back()
-            .map(|(i, _)| i)
-            .unwrap_or(0);
-        self.editor_text.replace_range(prev..self.cursor_byte, "");
-        self.cursor_byte = prev;
-        self.is_dirty = true;
+        self.hover_byte = None;
+        self.refresh_status();
+        cx.notify();
     }
 
-    fn delete_forward(&mut self) {
-        self.clamp_cursor_to_boundary();
-        if self.cursor_byte >= self.editor_text.len() {
+    fn redo_edit(&mut self, cx: &mut Context<Self>) {
+        if !self.core.redo() {
+            self.status = "Nothing to redo".into();
+            cx.notify();
             return;
         }
-        let mut iter = self.editor_text[self.cursor_byte..].char_indices();
-        let _ = iter.next();
-        let next = iter
-            .next()
-            .map(|(i, _)| self.cursor_byte + i)
-            .unwrap_or(self.editor_text.len());
-        self.editor_text.replace_range(self.cursor_byte..next, "");
-        self.is_dirty = true;
+        self.hover_byte = None;
+        self.refresh_status();
+        cx.notify();
     }
 
-    fn move_left(&mut self) {
-        self.clamp_cursor_to_boundary();
-        if self.cursor_byte == 0 {
-            return;
-        }
-        self.cursor_byte = self.editor_text[..self.cursor_byte]
-            .char_indices()
-            .next_back()
-            .map(|(i, _)| i)
-            .unwrap_or(0);
-    }
-
-    fn move_right(&mut self) {
-        self.clamp_cursor_to_boundary();
-        if self.cursor_byte >= self.editor_text.len() {
-            return;
-        }
-        let mut iter = self.editor_text[self.cursor_byte..].char_indices();
-        let _ = iter.next();
-        self.cursor_byte = iter
-            .next()
-            .map(|(i, _)| self.cursor_byte + i)
-            .unwrap_or(self.editor_text.len());
-    }
-
-    fn line_col_from_byte(&self, byte: usize) -> (usize, usize) {
-        let mut line = 0usize;
-        let mut col = 0usize;
-        for (idx, ch) in self.editor_text.char_indices() {
-            if idx >= byte {
-                break;
+    fn copy_selection(&mut self, cx: &mut Context<Self>) -> bool {
+        match editor_io::copy_selection(&self.core, cx) {
+            CopySelectionResult::Copied => {
+                self.status = "Selection copied".into();
+                true
             }
-            if ch == '\n' {
-                line += 1;
-                col = 0;
-            } else {
-                col += 1;
+            CopySelectionResult::NothingSelected => {
+                self.status = "Nothing selected".into();
+                false
             }
         }
-        (line, col)
     }
 
-    fn byte_from_line_col(&self, target_line: usize, target_col: usize) -> usize {
-        let mut line = 0usize;
-        let mut col = 0usize;
-        for (idx, ch) in self.editor_text.char_indices() {
-            if line == target_line && col == target_col {
-                return idx;
+    fn cut_selection(&mut self, cx: &mut Context<Self>) -> bool {
+        match editor_io::cut_selection(&mut self.core, cx) {
+            CutSelectionResult::Cut => {
+                self.hover_byte = None;
+                self.status = "Selection cut".into();
+                true
             }
-            if ch == '\n' {
-                if line == target_line {
-                    return idx;
-                }
-                line += 1;
-                col = 0;
-            } else if line == target_line {
-                col += 1;
+            CutSelectionResult::NothingSelected => {
+                self.status = "Nothing selected".into();
+                false
             }
         }
-        self.editor_text.len()
     }
 
-    fn move_up(&mut self) {
-        self.clamp_cursor_to_boundary();
-        let (line, col) = self.line_col_from_byte(self.cursor_byte);
-        if line == 0 {
-            return;
+    fn paste_from_clipboard(&mut self, cx: &mut Context<Self>) -> bool {
+        match editor_io::paste_from_clipboard(&mut self.core, cx) {
+            PasteResult::Pasted => {
+                self.hover_byte = None;
+                self.status = "Pasted from clipboard".into();
+                true
+            }
+            PasteResult::ClipboardEmpty => {
+                self.status = "Clipboard is empty".into();
+                false
+            }
+            PasteResult::ClipboardHasNoText => {
+                self.status = "Clipboard has no text".into();
+                false
+            }
         }
-        self.cursor_byte = self.byte_from_line_col(line - 1, col);
-    }
-
-    fn move_down(&mut self) {
-        self.clamp_cursor_to_boundary();
-        let (line, col) = self.line_col_from_byte(self.cursor_byte);
-        self.cursor_byte = self.byte_from_line_col(line + 1, col);
-    }
-
-    fn move_home(&mut self) {
-        self.clamp_cursor_to_boundary();
-        let before = &self.editor_text[..self.cursor_byte];
-        self.cursor_byte = before.rfind('\n').map_or(0, |i| i + 1);
-    }
-
-    fn move_end(&mut self) {
-        self.clamp_cursor_to_boundary();
-        let after = &self.editor_text[self.cursor_byte..];
-        self.cursor_byte = after
-            .find('\n')
-            .map(|i| self.cursor_byte + i)
-            .unwrap_or(self.editor_text.len());
     }
 
     fn refresh_status(&mut self) {
-        let (line, col) = self.line_col_from_byte(self.cursor_byte);
-        self.status = if self.is_dirty {
-            format!("Modified (Ctrl+S to save) | Ln {}, Col {}", line + 1, col + 1).into()
-        } else {
-            format!("Ln {}, Col {}", line + 1, col + 1).into()
-        };
+        self.status = editor_commands::cursor_status(&self.core).into();
     }
 
     fn top_menu_index(id: TopMenuId) -> usize {
@@ -792,7 +469,11 @@ impl VeloIde {
     }
 
     fn hover_menu_item(&mut self, item: MenuItem, cx: &mut Context<Self>) {
-        let next = if item.submenu.is_empty() { None } else { Some(item.id) };
+        let next = if item.submenu.is_empty() {
+            None
+        } else {
+            Some(item.id)
+        };
         if self.open_submenu != next {
             self.open_submenu = next;
             cx.notify();
@@ -813,81 +494,62 @@ impl VeloIde {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        match cmd {
-            MenuCommand::NewTextFile => {
-                self.editor_text.clear();
-                self.cursor_byte = 0;
-                self.selection.clear();
+        match AppMenuAction::from(cmd) {
+            AppMenuAction::NewTextFile => {
+                self.core.clear();
                 self.hover_byte = None;
-                self.is_dirty = false;
                 self.status = "New text buffer created".into();
             }
-            MenuCommand::OpenFile => {
+            AppMenuAction::OpenFile => {
                 self.status = "Open File is not implemented yet".into();
             }
-            MenuCommand::OpenFolder => self.open_project_dialog(window, cx),
-            MenuCommand::Save => self.save_active_file(cx),
-            MenuCommand::Exit => {
+            AppMenuAction::OpenFolder => self.open_project_dialog(window, cx),
+            AppMenuAction::Save => self.save_active_file(cx),
+            AppMenuAction::Exit => {
                 self.status = "Exit is not implemented yet".into();
             }
-            MenuCommand::Undo => {
-                self.status = "Undo is not implemented yet".into();
+            AppMenuAction::Undo => {
+                self.undo_edit(cx);
             }
-            MenuCommand::Redo => {
-                self.status = "Redo is not implemented yet".into();
+            AppMenuAction::Redo => {
+                self.redo_edit(cx);
             }
-            MenuCommand::Cut => {
-                self.status = "Cut is not implemented yet".into();
+            AppMenuAction::Cut => {
+                let _ = self.cut_selection(cx);
             }
-            MenuCommand::Copy => {
-                self.status = "Copy is not implemented yet".into();
+            AppMenuAction::Copy => {
+                let _ = self.copy_selection(cx);
             }
-            MenuCommand::Paste => {
-                self.status = "Paste is not implemented yet".into();
+            AppMenuAction::Paste => {
+                let _ = self.paste_from_clipboard(cx);
             }
-            MenuCommand::Find => {
+            AppMenuAction::Find => {
                 self.status = "Find is not implemented yet".into();
             }
-            MenuCommand::Replace => {
+            AppMenuAction::Replace => {
                 self.status = "Replace is not implemented yet".into();
             }
-            MenuCommand::SelectAll => {
-                let layout = self.editor_text_layout();
-                let last_line = layout.line_count().saturating_sub(1);
-                let last_col = layout.line_len(last_line);
-                self.selection.anchor = Some(TextPoint { line: 0, column: 0 });
-                self.selection.head = Some(TextPoint {
-                    line: last_line,
-                    column: last_col,
-                });
-                self.cursor_byte = self.editor_text.len();
+            AppMenuAction::SelectAll => {
+                editor_commands::select_all(&mut self.core);
                 self.refresh_status();
             }
-            MenuCommand::ExpandSelection => {
-                let layout = self.editor_text_layout();
-                let current = layout.byte_to_point(self.cursor_byte);
-                let next = TextPoint {
-                    line: current.line,
-                    column: (current.column + 1).min(layout.line_len(current.line)),
-                };
-                self.selection.anchor = Some(current);
-                self.selection.head = Some(next);
-                self.cursor_byte = layout.point_to_byte(next);
+            AppMenuAction::ExpandSelection => {
+                editor_commands::expand_selection(&mut self.core);
                 self.refresh_status();
             }
-            MenuCommand::CommandPalette => {
+            AppMenuAction::CommandPalette => {
                 self.status = "Command Palette is not implemented yet".into();
             }
-            MenuCommand::AppearancePanel => {
+            AppMenuAction::AppearancePanel => {
                 self.status = "Appearance submenu opened".into();
             }
-            MenuCommand::ZoomIn => {
+            AppMenuAction::ZoomIn => {
                 self.status = "Zoom In is not implemented yet".into();
             }
-            MenuCommand::ZoomOut => {
+            AppMenuAction::ZoomOut => {
                 self.status = "Zoom Out is not implemented yet".into();
             }
-            MenuCommand::ZoomReset => {
+            AppMenuAction::ZoomReset => {
                 self.status = "Reset Zoom is not implemented yet".into();
             }
         }
@@ -903,90 +565,244 @@ impl VeloIde {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.active_index.is_none() {
+        if self.workspace.active_index.is_none() {
             return;
         }
 
-        let mods = event.keystroke.modifiers;
-        let cmd_or_ctrl = mods.control || mods.platform;
-
-        if cmd_or_ctrl && event.keystroke.key.eq_ignore_ascii_case("s") {
-            self.save_active_file(cx);
-            return;
-        }
-
-        if cmd_or_ctrl || mods.alt || mods.function {
-            return;
-        }
-
-        match event.keystroke.key.as_str() {
-            "left" => self.move_left(),
-            "right" => self.move_right(),
-            "up" => self.move_up(),
-            "down" => self.move_down(),
-            "home" => self.move_home(),
-            "end" => self.move_end(),
-            "backspace" => {
-                self.delete_backspace();
+        let action = resolve_editor_key_action(event);
+        match action {
+            EditorKeyAction::Save => {
+                self.save_active_file(cx);
+                return;
             }
-            "delete" => {
-                self.delete_forward();
+            EditorKeyAction::Undo => {
+                self.undo_edit(cx);
+                return;
             }
-            "enter" => {
-                self.insert_at_cursor("\n");
+            EditorKeyAction::Redo => {
+                self.redo_edit(cx);
+                return;
             }
-            "tab" => {
-                self.insert_at_cursor("    ");
+            EditorKeyAction::Copy => {
+                let _ = self.copy_selection(cx);
+                cx.notify();
+                return;
             }
-            _ => {
-                if let Some(ch) = &event.keystroke.key_char {
-                    self.insert_at_cursor(ch);
+            EditorKeyAction::Cut => {
+                let changed = self.cut_selection(cx);
+                if changed {
+                    self.refresh_status();
                 }
+                cx.notify();
+                return;
             }
+            EditorKeyAction::Paste => {
+                let changed = self.paste_from_clipboard(cx);
+                if changed {
+                    self.refresh_status();
+                }
+                cx.notify();
+                return;
+            }
+            EditorKeyAction::SelectAll => {
+                editor_commands::select_all(&mut self.core);
+                self.refresh_status();
+                cx.notify();
+                return;
+            }
+            _ => {}
         }
 
-        self.selection.clear();
+        match editor_runtime::apply_core_key_action(&mut self.core, &action) {
+            CoreKeyApply::Applied => {}
+            CoreKeyApply::NotHandled => return,
+        }
+
         self.hover_byte = None;
         self.refresh_status();
         cx.notify();
     }
 
     fn render_welcome(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let recent_items = if let Some(root) = self.workspace.project_root.as_ref() {
+            vec![format!("{}", root.display())]
+        } else {
+            vec![
+                "D:/Projects/VeloCode/velo".to_string(),
+                "D:/Projects/iNetVPN/frontend".to_string(),
+                "D:/Projects/git tmp/vscode".to_string(),
+            ]
+        };
+
         div()
             .size_full()
-            .bg(rgb(0x020202))
-            .text_color(rgb(0xF2F5FB))
+            .bg(rgb(0x0B0F14))
+            .text_color(rgb(0xD5DCEA))
             .flex()
             .items_center()
             .justify_center()
             .child(
                 div()
-                    .w(px(700.0))
-                    .rounded_lg()
-                    .bg(rgb(0x1D2230))
-                    .p_6()
-                    .flex_col()
-                    .gap_3()
-                    .child("Velo")
-                    .child("A Rust + GPUI code editor")
-                    .child("Start like VS Code: open a folder and begin editing.")
+                    .w(px(980.0))
+                    .h(px(620.0))
+                    .rounded_xl()
+                    .border_1()
+                    .border_color(rgb(0x242A35))
+                    .bg(rgb(0x11161E))
+                    .overflow_hidden()
+                    .flex()
                     .child(
                         div()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .px_3()
-                            .py_2()
-                            .rounded_md()
-                            .bg(rgb(0x222A3A))
-                            .id("welcome-open-folder")
-                            .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
-                                this.open_project_dialog(window, cx);
-                            }))
-                            .child(img(self.icons.folder_open()).size(px(16.0)))
-                            .child("Open Folder"),
+                            .w(px(320.0))
+                            .h_full()
+                            .p_6()
+                            .flex_col()
+                            .justify_between()
+                            .bg(rgb(0x0E131B))
+                            .child(
+                                div()
+                                    .flex_col()
+                                    .gap_2()
+                                    .child(
+                                        div()
+                                            .w(px(52.0))
+                                            .h(px(52.0))
+                                            .rounded_lg()
+                                            .bg(rgb(0x1F6FEB))
+                                            .flex()
+                                            .items_center()
+                                            .justify_center()
+                                            .child("V"),
+                                    )
+                                    .child("Velo")
+                                    .child("The editor for high velocity coding")
+                                    .child("Rust + GPUI"),
+                            )
+                            .child(
+                                div()
+                                    .flex_col()
+                                    .gap_2()
+                                    .child("Tips")
+                                    .child("Ctrl+O  Open folder")
+                                    .child("Ctrl+S  Save file")
+                                    .child("Ctrl+Z / Ctrl+Shift+Z  Undo / Redo"),
+                            ),
                     )
-                    .child("Tips: Click a file in Explorer, type in editor, press Ctrl+S to save."),
+                    .child(
+                        div()
+                            .flex_1()
+                            .h_full()
+                            .p_6()
+                            .flex_col()
+                            .gap_4()
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .justify_between()
+                                    .child("Welcome to Velo")
+                                    .child("Zed-style Start"),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .gap_2()
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .items_center()
+                                            .gap_2()
+                                            .px_3()
+                                            .py_2()
+                                            .rounded_md()
+                                            .bg(rgb(0x1A2330))
+                                            .id("welcome-open-folder")
+                                            .on_click(cx.listener(
+                                                |this, _: &ClickEvent, window, cx| {
+                                                    this.open_project_dialog(window, cx);
+                                                },
+                                            ))
+                                            .child(img(self.icons.folder_open()).size(px(16.0)))
+                                            .child("Open Folder"),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .items_center()
+                                            .gap_2()
+                                            .px_3()
+                                            .py_2()
+                                            .rounded_md()
+                                            .bg(rgb(0x1A2330))
+                                            .id("welcome-new-buffer")
+                                            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                                                this.core.clear();
+                                                this.screen = Screen::Editor;
+                                                this.status = "New buffer".into();
+                                                cx.notify();
+                                            }))
+                                            .child("New File"),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .rounded_lg()
+                                    .border_1()
+                                    .border_color(rgb(0x242A35))
+                                    .bg(rgb(0x0F141C))
+                                    .p_4()
+                                    .flex_col()
+                                    .gap_2()
+                                    .child("Recent Projects")
+                                    .children(recent_items.iter().enumerate().map(
+                                        |(idx, item)| {
+                                            div()
+                                                .flex()
+                                                .items_center()
+                                                .justify_between()
+                                                .gap_2()
+                                                .px_3()
+                                                .py_2()
+                                                .rounded_md()
+                                                .bg(rgb(0x171D27))
+                                                .id(("welcome-recent", idx))
+                                                .child(div().truncate().child(item.clone()))
+                                                .child("Open")
+                                        },
+                                    )),
+                            )
+                            .child(
+                                div()
+                                    .rounded_lg()
+                                    .border_1()
+                                    .border_color(rgb(0x242A35))
+                                    .bg(rgb(0x0F141C))
+                                    .p_4()
+                                    .flex_col()
+                                    .gap_2()
+                                    .child("Shortcuts")
+                                    .child("Ctrl+P  Quick Open")
+                                    .child("Ctrl+Shift+P  Command Palette")
+                                    .child("Ctrl+`  Toggle Terminal (planned)"),
+                            ),
+                    ),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .bottom(px(18.0))
+                    .right(px(20.0))
+                    .text_color(rgb(0x6C778B))
+                    .child("Velo Welcome"),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .top(px(14.0))
+                    .left(px(18.0))
+                    .text_color(rgb(0x6C778B))
+                    .child("File  Edit  Selection  View  Go  Run  Terminal  Help"),
             )
             .into_any_element()
     }
@@ -994,88 +810,165 @@ impl VeloIde {
     fn render_workspace(&mut self, cx: &mut Context<Self>, window: &mut Window) -> AnyElement {
         let viewport_w = f32::from(window.viewport_size().width);
         let viewport_h = f32::from(window.viewport_size().height);
-        let explorer_visible_rows = (((viewport_h - 250.0) / 22.0).floor() as usize).clamp(8, 80);
-        let entries = self.visible_entries();
-        let max_scroll = entries.len().saturating_sub(explorer_visible_rows) as f32;
-        self.explorer_scroll = self.explorer_scroll.clamp(0.0, max_scroll);
+        let entries = self.workspace.visible_entries();
+        let explorer_view = compute_explorer_view(entries.len(), viewport_h, self.explorer_scroll);
+        self.explorer_scroll = explorer_view.scroll;
+
+        // Fallback recovery: if active tab points to a non-empty file but editor buffer is empty,
+        // reload text directly from disk so rendering can recover without reopening the project.
+        if self.core.text.is_empty() {
+            if let Some(active_idx) = self.workspace.active_index {
+                if let Some(file) = self.workspace.files.get(active_idx) {
+                    if let Ok(raw) = fs::read_to_string(&file.abs_path) {
+                        let normalized = raw.replace("\r\n", "\n").replace('\r', "\n");
+                        if !normalized.is_empty() {
+                            self.core.set_text(normalized);
+                            self.status = format!("Recovered view: {}", file.rel_path).into();
+                        }
+                    } else if let Ok(decoded) = decode_text_file(&file.abs_path) {
+                        let normalized = decoded.text.replace("\r\n", "\n").replace('\r', "\n");
+                        if !normalized.is_empty() {
+                            self.core.set_text(normalized);
+                            self.status = format!("Recovered view: {}", file.rel_path).into();
+                        }
+                    }
+                }
+            }
+        }
 
         let project_name: SharedString = self
+            .workspace
             .project_root
             .as_ref()
-            .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string().into()))
+            .and_then(|p| {
+                p.file_name()
+                    .map(|n| n.to_string_lossy().to_string().into())
+            })
             .unwrap_or_else(|| "Workspace".into());
 
         let active_language = self
+            .workspace
             .active_index
-            .map(|idx| self.files[idx].language)
+            .map(|idx| self.workspace.files[idx].language)
             .unwrap_or("text");
-        let display_text = self.editor_text.clone();
-        let editor_lines: Vec<&str> = display_text.split('\n').collect();
-        let editor_total = editor_lines.len().max(1);
-        let max_line_cols = editor_lines
-            .iter()
-            .map(|line| line.chars().count())
-            .max()
-            .unwrap_or(1);
-        let editor_visible_rows =
-            (((viewport_h - 180.0) / EDITOR_LINE_HEIGHT).floor() as usize).clamp(12, 140);
-        let editor_visible_cols =
-            (((viewport_w - self.sidebar_width - 170.0) / EDITOR_GLYPH_WIDTH).floor() as usize)
-                .clamp(24, 320);
-        let editor_max_scroll = editor_total.saturating_sub(editor_visible_rows) as f32;
-        let editor_hmax_scroll = max_line_cols.saturating_sub(editor_visible_cols) as f32;
-        self.editor_scroll = self.editor_scroll.clamp(0.0, editor_max_scroll);
-        self.editor_hscroll = self.editor_hscroll.clamp(0.0, editor_hmax_scroll);
-        let (editor_start, editor_end) = self.editor_window(editor_total, editor_visible_rows);
-        let (editor_col_start, editor_col_end) =
-            self.editor_h_window(max_line_cols.max(1), editor_visible_cols);
-        let viewport_lines = editor_lines[editor_start..editor_end]
-            .iter()
-            .map(|line| Self::slice_line_by_cols(line, editor_col_start, editor_col_end))
-            .collect::<Vec<_>>();
-        let editor_viewport = viewport_lines.join("\n");
-        let line_number_width = editor_total.to_string().len().max(2);
-        let line_numbers = (editor_start..editor_end)
-            .map(|line| format!("{:>width$}", line + 1, width = line_number_width))
-            .collect::<Vec<_>>()
-            .join("\n");
-        let text_layout = TextLayout::from_text(&self.editor_text);
-        let selection_rects = selection::selection_rects(
-            &self.selection,
-            &text_layout,
-            self.editor_text_metrics(),
-            ScrollOffset {
-                line: editor_start,
-                column: editor_col_start,
-            },
-            ViewportCells {
-                rows: editor_visible_rows,
-                cols: editor_visible_cols,
-            },
+        let mut editor_view = compute_editor_view(
+            &self.core.text,
+            viewport_w,
+            viewport_h,
+            self.sidebar_width,
+            EDITOR_LINE_HEIGHT,
+            EDITOR_GLYPH_WIDTH,
+            self.editor_scroll,
+            self.editor_hscroll,
         );
-        let highlighted = syntax_highlighted_text(&editor_viewport, active_language);
-        let editor_track_h = (editor_visible_rows as f32 * 17.5).clamp(120.0, 820.0);
-        let (editor_thumb_h, editor_thumb_top, editor_scrollable) = Self::scrollbar_metrics(
-            editor_total,
-            editor_visible_rows,
-            editor_start,
-            editor_track_h,
+
+        let core_has_visible_text = self.core.text.chars().any(|c| !c.is_whitespace());
+        let viewport_has_visible_text = editor_view.viewport_text.chars().any(|c| !c.is_whitespace());
+        if core_has_visible_text && !viewport_has_visible_text {
+            self.editor_scroll = 0.0;
+            self.editor_hscroll = 0.0;
+            editor_view = compute_editor_view(
+                &self.core.text,
+                viewport_w,
+                viewport_h,
+                self.sidebar_width,
+                EDITOR_LINE_HEIGHT,
+                EDITOR_GLYPH_WIDTH,
+                self.editor_scroll,
+                self.editor_hscroll,
+            );
+        }
+        self.editor_scroll = editor_view.scroll;
+        self.editor_hscroll = editor_view.hscroll;
+        let line_count = editor_view.line_count;
+        let mut editor_text_to_render = editor_view.viewport_text.clone();
+        let mut editor_line_numbers_to_render = editor_view.line_numbers.clone();
+        let mut use_full_buffer_fallback = false;
+        if !self.core.text.is_empty()
+            && (editor_text_to_render.is_empty()
+                || editor_text_to_render
+                    .lines()
+                    .all(|line| line.trim().is_empty()))
+        {
+            use_full_buffer_fallback = true;
+            self.editor_scroll = 0.0;
+            self.editor_hscroll = 0.0;
+            editor_text_to_render = self.core.text.clone();
+            let full_line_count = self.core.text.split('\n').count().max(1);
+            let line_number_width = full_line_count.to_string().len().max(2);
+            editor_line_numbers_to_render = (1..=full_line_count)
+                .map(|line| format!("{:>width$}", line, width = line_number_width))
+                .collect::<Vec<_>>()
+                .join("\n");
+        }
+
+        let editor_plain_text: SharedString = editor_text_to_render.clone().into();
+        let editor_line_numbers: SharedString = editor_line_numbers_to_render.into();
+
+        let text_layout = TextLayout::from_text(&self.core.text);
+        let selection_ranges = if use_full_buffer_fallback {
+            self.core
+                .selection_byte_range()
+                .map(|(start, end)| vec![start..end])
+                .unwrap_or_default()
+        } else {
+            selection::selection_byte_ranges_in_viewport(
+                &self.core.selection,
+                &text_layout,
+                ScrollOffset {
+                    line: editor_view.start_line,
+                    column: editor_view.start_col,
+                },
+                ViewportCells {
+                    rows: editor_view.visible_rows,
+                    cols: editor_view.visible_cols,
+                },
+                &editor_view.viewport_text,
+            )
+        };
+
+        let selection_overlay = StyledText::new(editor_text_to_render).with_highlights(
+            selection_ranges.into_iter().map(|range| {
+                (
+                    range,
+                    HighlightStyle {
+                        background_color: Some(rgb(0x31456D).into()),
+                        ..Default::default()
+                    },
+                )
+            }),
         );
-        let editor_htrack_w = (editor_visible_cols as f32 * 8.2).clamp(120.0, 1400.0);
-        let (editor_hthumb_w, editor_hthumb_left, editor_hscrollable) = Self::scrollbar_metrics(
-            max_line_cols.max(1),
-            editor_visible_cols,
-            editor_col_start,
-            editor_htrack_w,
+        let (editor_thumb_h, editor_thumb_top, editor_scrollable) = scrollbar_metrics(
+            editor_view.line_count,
+            editor_view.visible_rows,
+            editor_view.start_line,
+            editor_view.track_h,
         );
-        let (start, end) = self.explorer_window(entries.len(), explorer_visible_rows);
-        let visible_entries = &entries[start..end];
-        let tab_start = self.open_tabs.len().saturating_sub(8);
-        let visible_tabs = &self.open_tabs[tab_start..];
+        let (editor_hthumb_w, editor_hthumb_left, editor_hscrollable) = scrollbar_metrics(
+            editor_view.max_line_cols.max(1),
+            editor_view.visible_cols,
+            editor_view.start_col,
+            editor_view.htrack_w,
+        );
+        let visible_entries = &entries[explorer_view.start..explorer_view.end];
+        let editor_area_width = (viewport_w - self.sidebar_width - 110.0).max(240.0);
+        let tab_visible_count = ((editor_area_width - 72.0) / 154.0).floor() as usize;
+        let tab_visible_count = tab_visible_count.clamp(1, 12);
+        let max_tab_scroll = self
+            .workspace
+            .open_tabs
+            .len()
+            .saturating_sub(tab_visible_count);
+        self.tab_scroll = self.tab_scroll.min(max_tab_scroll);
+        let tab_end = (self.tab_scroll + tab_visible_count).min(self.workspace.open_tabs.len());
+        let visible_tabs = &self.workspace.open_tabs[self.tab_scroll..tab_end];
         let total = entries.len().max(1);
-        let track_h = (explorer_visible_rows as f32 * 22.0).clamp(150.0, 760.0);
-        let (thumb_h, thumb_top, explorer_scrollable) =
-            Self::scrollbar_metrics(total, explorer_visible_rows, start, track_h);
+        let (thumb_h, thumb_top, explorer_scrollable) = scrollbar_metrics(
+            total,
+            explorer_view.visible_rows,
+            explorer_view.start,
+            explorer_view.track_h,
+        );
         let menu_overlay = if let Some(open_id) = self.open_menu {
             let top_menu = Self::top_menu_by_id(open_id);
             let menu_index = Self::top_menu_index(open_id);
@@ -1138,10 +1031,16 @@ impl VeloIde {
                                 .flex()
                                 .items_center()
                                 .justify_between()
-                                .bg(if hovered { rgb(0x23324A) } else { rgb(0x1D2230) })
-                                .on_mouse_move(cx.listener(move |this, _: &MouseMoveEvent, _, cx| {
-                                    this.hover_menu_item(row_item, cx);
-                                }))
+                                .bg(if hovered {
+                                    rgb(0x23324A)
+                                } else {
+                                    rgb(0x1D2230)
+                                })
+                                .on_mouse_move(cx.listener(
+                                    move |this, _: &MouseMoveEvent, _, cx| {
+                                        this.hover_menu_item(row_item, cx);
+                                    },
+                                ))
                                 .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                                     if let Some(cmd) = row_item.command {
                                         this.execute_menu_command(cmd, window, cx);
@@ -1150,15 +1049,11 @@ impl VeloIde {
                                     }
                                 }))
                                 .child(div().child(item.label))
-                                .child(
-                                    div()
-                                        .text_color(rgb(0x8F98AA))
-                                        .child(if has_submenu {
-                                            ">"
-                                        } else {
-                                            item.keybinding.unwrap_or("")
-                                        }),
-                                )
+                                .child(div().text_color(rgb(0x8F98AA)).child(if has_submenu {
+                                    ">"
+                                } else {
+                                    item.keybinding.unwrap_or("")
+                                }))
                         })),
                 )
                 .child(if submenu_rows.is_empty() {
@@ -1274,7 +1169,7 @@ impl VeloIde {
                                             .flex()
                                             .items_center()
                                             .justify_center()
-                                            .child(img(self.icons.folder_open()).size(px(24.0))),
+                                            .child(img(self.icons.activity_explorer()).size(px(28.0))),
                                     )
                                     .child(
                                         div()
@@ -1284,7 +1179,7 @@ impl VeloIde {
                                             .flex()
                                             .items_center()
                                             .justify_center()
-                                            .child(img(self.icons.file()).size(px(24.0))),
+                                            .child(img(self.icons.activity_search()).size(px(28.0))),
                                     )
                                     .child(
                                         div()
@@ -1294,7 +1189,29 @@ impl VeloIde {
                                             .flex()
                                             .items_center()
                                             .justify_center()
-                                            .child(img(self.icons.run()).size(px(24.0))),
+                                            .child(
+                                                img(self.icons.activity_source_control()).size(px(28.0)),
+                                            ),
+                                    )
+                                    .child(
+                                        div()
+                                            .w_full()
+                                            .h(px(56.0))
+                                            .bg(rgb(0x1D2230))
+                                            .flex()
+                                            .items_center()
+                                            .justify_center()
+                                            .child(img(self.icons.activity_run()).size(px(28.0))),
+                                    )
+                                    .child(
+                                        div()
+                                            .w_full()
+                                            .h(px(56.0))
+                                            .bg(rgb(0x1D2230))
+                                            .flex()
+                                            .items_center()
+                                            .justify_center()
+                                            .child(img(self.icons.activity_extensions()).size(px(28.0))),
                                     ),
                             )
                             .child(
@@ -1310,7 +1227,7 @@ impl VeloIde {
                                             .flex()
                                             .items_center()
                                             .justify_center()
-                                            .child(img(self.icons.settings()).size(px(24.0))),
+                                            .child(img(self.icons.settings()).size(px(28.0))),
                                     ),
                             ),
                     )
@@ -1350,7 +1267,7 @@ impl VeloIde {
                                     .child(
                                         div().flex_1().flex_col().gap_1().children(
                                     visible_entries.iter().enumerate().map(|(visible_idx, row)| {
-                                        let row_id = start + visible_idx;
+                                        let row_id = explorer_view.start + visible_idx;
                                         match &row.kind {
                                             VisibleKind::Folder { abs_path, name, expanded } => {
                                                 let folder = abs_path.clone();
@@ -1370,16 +1287,17 @@ impl VeloIde {
                                                     .bg(rgb(0x171B24))
                                                     .id(("explorer-folder", row_id))
                                                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                                                        this.toggle_folder(&folder, cx);
+                                                        this.workspace.toggle_folder(&folder);
+                                                        cx.notify();
                                                     }))
                                                     .child(div().w(px((row.depth as f32) * 14.0)))
-                                                    .child(img(icon).size(px(17.0)))
+                                                    .child(img(icon).size(px(20.0)))
                                                     .child(div().flex_1().truncate().child(name.clone()))
                                             }
                                             VisibleKind::File { file_idx } => {
                                                 let idx = *file_idx;
-                                                let file = &self.files[idx];
-                                                let selected = self.active_index == Some(idx);
+                                                let file = &self.workspace.files[idx];
+                                                let selected = self.workspace.active_index == Some(idx);
                                                 div()
                                                     .flex()
                                                     .items_center()
@@ -1394,7 +1312,7 @@ impl VeloIde {
                                                         this.open_file_at(idx, window, cx);
                                                     }))
                                                     .child(div().w(px((row.depth as f32) * 14.0)))
-                                                    .child(img(this_icon(&self.icons, file)).size(px(17.0)))
+                                                    .child(img(this_icon(&self.icons, file)).size(px(20.0)))
                                                     .child(div().flex_1().truncate().child(file.name.clone()))
                                             }
                                         }
@@ -1404,7 +1322,7 @@ impl VeloIde {
                                     .child(
                                         div()
                                             .w(px(8.0))
-                                            .h(px(track_h))
+                                            .h(px(explorer_view.track_h))
                                             .rounded_md()
                                             .bg(rgb(0x222A3A))
                                             .child(
@@ -1448,36 +1366,73 @@ impl VeloIde {
                                     .flex()
                                     .items_center()
                                     .gap_1()
-                                    .overflow_hidden()
-                                    .children(
-                                    visible_tabs.iter().map(|tab_idx| {
-                                        let file = &self.files[*tab_idx];
-                                        let selected = self.active_index == Some(*tab_idx);
-                                        let mut label = Self::compact_label(&file.rel_path, 22).to_string();
-                                        if selected && self.is_dirty {
-                                            label.push_str(" *");
-                                        }
+                                    .child(
                                         div()
+                                            .w(px(28.0))
+                                            .h(px(28.0))
+                                            .rounded_md()
+                                            .bg(rgb(0x171B24))
                                             .flex()
                                             .items_center()
-                                            .gap_2()
-                                            .overflow_hidden()
-                                            .px_3()
-                                            .py_1()
-                                            .w(px(150.0))
-                                            .rounded_md()
-                                            .bg(if selected { rgb(0x23324A) } else { rgb(0x171B24) })
-                                            .id(("tab", *tab_idx))
-                                            .on_click(cx.listener({
-                                                let tab_idx = *tab_idx;
-                                                move |this, _: &ClickEvent, window, cx| {
-                                                    this.open_file_at(tab_idx, window, cx);
-                                                }
+                                            .justify_center()
+                                            .id("tabs-left")
+                                            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                                                this.tab_scroll = this.tab_scroll.saturating_sub(1);
+                                                cx.notify();
                                             }))
-                                            .child(img(this_icon(&self.icons, file)).size(px(13.0)))
-                                            .child(div().flex_1().truncate().child(label))
-                                    }),
-                                ),
+                                            .child("←"),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .overflow_hidden()
+                                            .flex()
+                                            .gap_1()
+                                            .children(visible_tabs.iter().map(|tab_idx| {
+                                                let file = &self.workspace.files[*tab_idx];
+                                                let selected = self.workspace.active_index == Some(*tab_idx);
+                                                let mut label = Self::compact_label(&file.rel_path, 22).to_string();
+                                                if selected && self.core.is_dirty {
+                                                    label.push_str(" *");
+                                                }
+                                                div()
+                                                    .flex_shrink_0()
+                                                    .flex()
+                                                    .items_center()
+                                                    .gap_2()
+                                                    .overflow_hidden()
+                                                    .px_3()
+                                                    .py_1()
+                                                    .w(px(150.0))
+                                                    .rounded_md()
+                                                    .bg(if selected { rgb(0x23324A) } else { rgb(0x171B24) })
+                                                    .id(("tab", *tab_idx))
+                                                    .on_click(cx.listener({
+                                                        let tab_idx = *tab_idx;
+                                                        move |this, _: &ClickEvent, window, cx| {
+                                                            this.open_file_at(tab_idx, window, cx);
+                                                        }
+                                                    }))
+                                                    .child(img(this_icon(&self.icons, file)).size(px(16.0)))
+                                                    .child(div().flex_1().truncate().child(label))
+                                            })),
+                                    )
+                                    .child(
+                                        div()
+                                            .w(px(28.0))
+                                            .h(px(28.0))
+                                            .rounded_md()
+                                            .bg(rgb(0x171B24))
+                                            .flex()
+                                            .items_center()
+                                            .justify_center()
+                                            .id("tabs-right")
+                                            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                                                this.tab_scroll = this.tab_scroll.saturating_add(1);
+                                                cx.notify();
+                                            }))
+                                            .child("→"),
+                                    ),
                             )
                             .child(
                                 div()
@@ -1510,28 +1465,6 @@ impl VeloIde {
                                                     .bg(rgb(0x1D2230))
                                                     .p_2()
                                                     .overflow_hidden()
-                                                    .on_mouse_down(
-                                                        MouseButton::Left,
-                                                        cx.listener(
-                                                            |this, event: &MouseDownEvent, window, cx| {
-                                                                window.focus(&this.editor_focus);
-                                                                this.begin_selection_drag(event, window, cx);
-                                                            },
-                                                        ),
-                                                    )
-                                                    .on_mouse_move(cx.listener(
-                                                        |this, event: &MouseMoveEvent, window, cx| {
-                                                            this.update_selection_drag(event, window, cx);
-                                                        },
-                                                    ))
-                                                    .on_mouse_up(
-                                                        MouseButton::Left,
-                                                        cx.listener(
-                                                            |this, event: &MouseUpEvent, window, cx| {
-                                                                this.end_selection_drag(event, window, cx);
-                                                            },
-                                                        ),
-                                                    )
                                                     .child(
                                                         div()
                                                             .size_full()
@@ -1546,7 +1479,7 @@ impl VeloIde {
                                                                     .text_color(rgb(0x69748A))
                                                                     .text_right()
                                                                     .px_2()
-                                                                    .child(line_numbers),
+                                                                    .child(editor_line_numbers),
                                                             )
                                                             .child(
                                                                 div()
@@ -1554,23 +1487,47 @@ impl VeloIde {
                                                                     .h_full()
                                                                     .overflow_hidden()
                                                                     .relative()
-                                                                    .children(selection_rects.iter().enumerate().map(|(idx, rect)| {
-                                                                        div()
-                                                                            .id(("selection-rect", idx))
-                                                                            .absolute()
-                                                                            .left(px(rect.x))
-                                                                            .top(px(rect.y))
-                                                                            .w(px(rect.width))
-                                                                            .h(px(rect.height))
-                                                                            .bg(rgb(0x2B3E62))
-                                                                    }))
+                                                                    .on_mouse_down(
+                                                                        MouseButton::Left,
+                                                                        cx.listener(
+                                                                            |this, event: &MouseDownEvent, window, cx| {
+                                                                                window.focus(&this.editor_focus);
+                                                                                this.begin_selection_drag(event, window, cx);
+                                                                            },
+                                                                        ),
+                                                                    )
+                                                                    .on_mouse_move(cx.listener(
+                                                                        |this, event: &MouseMoveEvent, window, cx| {
+                                                                            this.update_selection_drag(event, window, cx);
+                                                                        },
+                                                                    ))
+                                                                    .on_mouse_up(
+                                                                        MouseButton::Left,
+                                                                        cx.listener(
+                                                                            |this, event: &MouseUpEvent, window, cx| {
+                                                                                this.end_selection_drag(event, window, cx);
+                                                                            },
+                                                                        ),
+                                                                    )
                                                                     .child(
                                                                         div()
                                                                             .absolute()
                                                                             .top_0()
                                                                             .left_0()
                                                                             .size_full()
-                                                                            .child(highlighted),
+                                                                            .text_color(rgb(0xC7D0E0))
+                                                                            .font_family("Consolas")
+                                                                            .child(editor_plain_text.clone()),
+                                                                    )
+                                                                    .child(
+                                                                        div()
+                                                                            .absolute()
+                                                                            .top_0()
+                                                                            .left_0()
+                                                                            .size_full()
+                                                                                    .text_color(rgb(0xC7D0E0))
+                                                                                    .font_family("Consolas")
+                                                                                    .child(selection_overlay),
                                                                     ),
                                                             ),
                                                     ),
@@ -1578,7 +1535,7 @@ impl VeloIde {
                                             .child(
                                                 div()
                                                     .w(px(10.0))
-                                                    .h(px(editor_track_h))
+                                                    .h(px(editor_view.track_h))
                                                     .rounded_md()
                                                     .bg(rgb(0x222A3A))
                                                     .child(
@@ -1626,7 +1583,7 @@ impl VeloIde {
                                     .bg(rgb(0x171B24))
                                     .text_color(rgb(0x8F98AA))
                                     .child(self.status.clone())
-                                    .child(format!("{} | GPUI", active_language)),
+                                    .child(format!("{} lines | {} | GPUI", line_count, active_language)),
                             ),
                     ),
                     ),
@@ -1643,7 +1600,7 @@ impl VeloIde {
                 }),
             )
             .on_click(cx.listener(|this, _: &ClickEvent, window, _| {
-                if this.active_index.is_some() {
+                if this.workspace.active_index.is_some() {
                     window.focus(&this.editor_focus);
                 }
             }))
@@ -1663,9 +1620,3 @@ impl Render for VeloIde {
         }
     }
 }
-
-
-
-
-
-

@@ -1,6 +1,15 @@
 ﻿use std::path::Path;
 
 pub fn language_and_icon_for(path: &Path) -> (&'static str, &'static str) {
+    let file_name = path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .map(|s| s.to_ascii_lowercase())
+        .unwrap_or_default();
+    if file_name == ".env" || file_name.starts_with(".env.") {
+        return ("dotenv", "settings");
+    }
+
     let ext = path
         .extension()
         .and_then(|s| s.to_str())

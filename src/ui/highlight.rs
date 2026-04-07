@@ -1,8 +1,13 @@
-﻿use std::ops::Range;
+use std::ops::Range;
 
 use gpui::{rgb, HighlightStyle, StyledText};
 
-pub fn syntax_highlighted_text(text: &str, language: &str) -> StyledText {
+#[allow(dead_code)]
+pub fn syntax_highlighted_text_with_selection(
+    text: &str,
+    language: &str,
+    selection_ranges: Vec<Range<usize>>,
+) -> StyledText {
     let keyword_color = HighlightStyle {
         color: Some(rgb(0x4FAEFF).into()),
         ..Default::default()
@@ -24,20 +29,62 @@ pub fn syntax_highlighted_text(text: &str, language: &str) -> StyledText {
             "for", "while", "loop", "use", "mod", "return", "async", "await",
         ],
         "typescript" | "javascript" => &[
-            "function", "const", "let", "var", "class", "interface", "type", "if", "else", "for",
-            "while", "return", "import", "export", "async", "await", "new",
+            "function",
+            "const",
+            "let",
+            "var",
+            "class",
+            "interface",
+            "type",
+            "if",
+            "else",
+            "for",
+            "while",
+            "return",
+            "import",
+            "export",
+            "async",
+            "await",
+            "new",
         ],
         "python" => &[
-            "def", "class", "import", "from", "if", "elif", "else", "for", "while", "return", "try",
-            "except", "with", "as", "lambda", "async", "await",
+            "def", "class", "import", "from", "if", "elif", "else", "for", "while", "return",
+            "try", "except", "with", "as", "lambda", "async", "await",
         ],
         "go" => &[
-            "func", "package", "import", "var", "const", "type", "struct", "interface", "if", "else",
-            "for", "range", "return", "go", "defer",
+            "func",
+            "package",
+            "import",
+            "var",
+            "const",
+            "type",
+            "struct",
+            "interface",
+            "if",
+            "else",
+            "for",
+            "range",
+            "return",
+            "go",
+            "defer",
         ],
         "java" | "c" | "cpp" | "csharp" | "php" | "kotlin" | "swift" => &[
-            "class", "public", "private", "protected", "static", "void", "int", "string", "if", "else",
-            "for", "while", "return", "new", "import", "package",
+            "class",
+            "public",
+            "private",
+            "protected",
+            "static",
+            "void",
+            "int",
+            "string",
+            "if",
+            "else",
+            "for",
+            "while",
+            "return",
+            "new",
+            "import",
+            "package",
         ],
         "ruby" => &[
             "def", "class", "module", "if", "elsif", "else", "do", "end", "require", "return",
@@ -45,32 +92,49 @@ pub fn syntax_highlighted_text(text: &str, language: &str) -> StyledText {
         "json" => &["true", "false", "null"],
         "yaml" | "toml" => &["true", "false"],
         "sql" => &[
-            "select", "from", "where", "insert", "update", "delete", "join", "inner", "left", "right",
-            "group", "order", "by", "limit", "as",
+            "select", "from", "where", "insert", "update", "delete", "join", "inner", "left",
+            "right", "group", "order", "by", "limit", "as",
         ],
         "html" | "xml" => &["<", "</", "/>"],
-        "css" => &["@media", "@keyframes", "display", "position", "color", "background"],
+        "css" => &[
+            "@media",
+            "@keyframes",
+            "display",
+            "position",
+            "color",
+            "background",
+        ],
         _ => &[],
     };
 
     for kw in keywords {
-        ranges.extend(find_token_ranges(text, kw).into_iter().map(|r| (r, keyword_color)));
+        ranges.extend(
+            find_token_ranges(text, kw)
+                .into_iter()
+                .map(|r| (r, keyword_color)),
+        );
     }
 
     for kw in ["String", "Result", "Option", "Vec", "Self"] {
-        ranges.extend(find_token_ranges(text, kw).into_iter().map(|r| (r, type_color)));
+        ranges.extend(
+            find_token_ranges(text, kw)
+                .into_iter()
+                .map(|r| (r, type_color)),
+        );
     }
 
     let comment_prefixes: &[&str] = match language {
-        "python" | "yaml" | "toml" | "shell" => &["#"],
+        "python" | "yaml" | "toml" | "shell" | "dotenv" => &["#"],
         "sql" => &["--"],
-        _ => &["//"],
+        "rust" | "typescript" | "javascript" | "go" | "java" | "c" | "cpp" | "csharp"
+        | "php" | "kotlin" | "swift" => &["//"],
+        _ => &[],
     };
 
     let mut offset = 0usize;
     for line in text.split_inclusive('\n') {
         for prefix in comment_prefixes {
-            if let Some(at) = line.find(prefix) {
+            if let Some(at) = find_comment_start(line, prefix) {
                 ranges.push((offset + at..offset + line.len(), comment_color));
                 break;
             }
@@ -78,11 +142,20 @@ pub fn syntax_highlighted_text(text: &str, language: &str) -> StyledText {
         offset += line.len();
     }
 
+    let selection_bg = HighlightStyle {
+        background_color: Some(rgb(0x31456D).into()),
+        ..Default::default()
+    };
+    for range in selection_ranges {
+        ranges.push((range, selection_bg));
+    }
+
     ranges = sanitize_highlight_ranges(text, ranges);
 
     StyledText::new(text.to_owned()).with_highlights(ranges)
 }
 
+#[allow(dead_code)]
 fn find_token_ranges(text: &str, token: &str) -> Vec<Range<usize>> {
     let mut out = Vec::new();
     if token.is_empty() {
@@ -115,6 +188,7 @@ fn find_token_ranges(text: &str, token: &str) -> Vec<Range<usize>> {
     out
 }
 
+#[allow(dead_code)]
 fn sanitize_highlight_ranges(
     text: &str,
     mut ranges: Vec<(Range<usize>, HighlightStyle)>,
@@ -125,16 +199,43 @@ fn sanitize_highlight_ranges(
             && text.is_char_boundary(r.start)
             && text.is_char_boundary(r.end)
     });
-    ranges.sort_by_key(|(r, _)| r.start);
+    ranges.sort_by(|(a, _), (b, _)| {
+        a.start
+            .cmp(&b.start)
+            .then_with(|| a.end.cmp(&b.end))
+    });
 
-    let mut out: Vec<(Range<usize>, HighlightStyle)> = Vec::with_capacity(ranges.len());
+    let mut out = Vec::with_capacity(ranges.len());
     let mut last_end = 0usize;
-    for (r, style) in ranges {
-        if r.start < last_end {
+    for (range, style) in ranges {
+        if range.end <= last_end {
             continue;
         }
-        last_end = r.end;
-        out.push((r, style));
+        let start = range.start.max(last_end);
+        if start >= range.end {
+            continue;
+        }
+        out.push((start..range.end, style));
+        last_end = range.end;
     }
+
     out
+}
+
+#[allow(dead_code)]
+fn find_comment_start(line: &str, prefix: &str) -> Option<usize> {
+    if prefix.is_empty() {
+        return None;
+    }
+
+    let mut from = 0usize;
+    while let Some(found) = line[from..].find(prefix) {
+        let idx = from + found;
+        if prefix == "//" && idx > 0 && line[..idx].chars().next_back() == Some(':') {
+            from = idx + prefix.len();
+            continue;
+        }
+        return Some(idx);
+    }
+    None
 }
