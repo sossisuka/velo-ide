@@ -34,3 +34,7 @@ cargo run
 ```
 
 If `cargo` is not installed, install Rust from <https://rustup.rs> first.
+
+## Screenshot
+
+![Velo IDE Screenshot](Exmple.png)
