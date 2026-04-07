@@ -1,0 +1,9 @@
+[package]
+name = "velo"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0"
+gpui = "0.2"
+rfd = "0.15"
