@@ -396,8 +396,8 @@ impl VeloIde {
         cx.notify();
     }
 
-    fn explorer_window(&self, total: usize) -> (usize, usize) {
-        let visible = 22usize;
+    fn explorer_window(&self, total: usize, visible: usize) -> (usize, usize) {
+        let visible = visible.max(1);
         if total <= visible {
             return (0, total);
         }
@@ -427,8 +427,8 @@ impl VeloIde {
         cx.notify();
     }
 
-    fn editor_window(&self, total: usize) -> (usize, usize) {
-        let visible = 30usize;
+    fn editor_window(&self, total: usize, visible: usize) -> (usize, usize) {
+        let visible = visible.max(1);
         if total <= visible {
             return (0, total);
         }
@@ -717,9 +717,11 @@ impl VeloIde {
     }
 
     fn render_workspace(&mut self, cx: &mut Context<Self>, window: &mut Window) -> AnyElement {
-        let visible_rows = 28usize;
+        let viewport_w = f32::from(window.viewport_size().width);
+        let viewport_h = f32::from(window.viewport_size().height);
+        let explorer_visible_rows = (((viewport_h - 250.0) / 22.0).floor() as usize).clamp(8, 80);
         let entries = self.visible_entries();
-        let max_scroll = entries.len().saturating_sub(visible_rows) as f32;
+        let max_scroll = entries.len().saturating_sub(explorer_visible_rows) as f32;
         self.explorer_scroll = self.explorer_scroll.clamp(0.0, max_scroll);
 
         let project_name: SharedString = self
@@ -732,9 +734,6 @@ impl VeloIde {
             .active_index
             .map(|idx| self.files[idx].language)
             .unwrap_or("text");
-        let viewport_w = f32::from(window.viewport_size().width);
-        let viewport_h = f32::from(window.viewport_size().height);
-
         let display_text = self.render_text_with_cursor();
         let editor_lines: Vec<&str> = display_text.split('\n').collect();
         let editor_total = editor_lines.len().max(1);
@@ -750,7 +749,7 @@ impl VeloIde {
         let editor_hmax_scroll = max_line_cols.saturating_sub(editor_visible_cols) as f32;
         self.editor_scroll = self.editor_scroll.clamp(0.0, editor_max_scroll);
         self.editor_hscroll = self.editor_hscroll.clamp(0.0, editor_hmax_scroll);
-        let (editor_start, editor_end) = self.editor_window(editor_total);
+        let (editor_start, editor_end) = self.editor_window(editor_total, editor_visible_rows);
         let (editor_col_start, editor_col_end) = self.editor_h_window(max_line_cols.max(1));
         let viewport_lines = editor_lines[editor_start..editor_end]
             .iter()
@@ -777,14 +776,14 @@ impl VeloIde {
             editor_col_start,
             editor_htrack_w,
         );
-        let (start, end) = self.explorer_window(entries.len());
+        let (start, end) = self.explorer_window(entries.len(), explorer_visible_rows);
         let visible_entries = &entries[start..end];
         let tab_start = self.open_tabs.len().saturating_sub(8);
         let visible_tabs = &self.open_tabs[tab_start..];
         let total = entries.len().max(1);
-        let track_h = (viewport_h - 250.0).clamp(150.0, 760.0);
+        let track_h = (explorer_visible_rows as f32 * 22.0).clamp(150.0, 760.0);
         let (thumb_h, thumb_top, explorer_scrollable) =
-            Self::scrollbar_metrics(total, visible_rows, start, track_h);
+            Self::scrollbar_metrics(total, explorer_visible_rows, start, track_h);
 
         div()
             .size_full()
