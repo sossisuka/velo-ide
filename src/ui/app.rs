@@ -1,7 +1,8 @@
 ﻿use crate::ui::{
     highlight::syntax_highlighted_text,
     language::language_and_icon_for,
-    selection::{self, ScrollOffset, SelectionState, TextLayout, TextMetrics, ViewportCells},
+    menu::{MenuCommand, MenuItem, TopMenu, TopMenuId, TOP_MENUS},
+    selection::{self, ScrollOffset, SelectionState, TextLayout, TextMetrics, TextPoint, ViewportCells},
 };
 use std::{
     collections::HashSet,
@@ -98,6 +99,10 @@ const EDITOR_GLYPH_WIDTH: f32 = 8.2;
 const EDITOR_LEFT_PADDING: f32 = 8.0;
 const EDITOR_TOP_PADDING: f32 = 8.0;
 const EDITOR_GUTTER_WIDTH: f32 = 60.0;
+const MENU_BAR_HEIGHT: f32 = 28.0;
+const MENU_BUTTON_WIDTH: f32 = 92.0;
+const MENU_ITEM_HEIGHT: f32 = 28.0;
+const MENU_PANEL_WIDTH: f32 = 300.0;
 
 pub struct VeloIde {
     icons: Icons,
@@ -122,6 +127,8 @@ pub struct VeloIde {
     cursor_byte: usize,
     selection: SelectionState,
     hover_byte: Option<usize>,
+    open_menu: Option<TopMenuId>,
+    open_submenu: Option<&'static str>,
     is_dirty: bool,
     status: SharedString,
 }
@@ -162,6 +169,8 @@ impl VeloIde {
             cursor_byte: 0,
             selection: SelectionState::default(),
             hover_byte: None,
+            open_menu: None,
+            open_submenu: None,
             is_dirty: false,
             status: "Ready".into(),
         }
@@ -744,6 +753,142 @@ impl VeloIde {
         };
     }
 
+    fn top_menu_index(id: TopMenuId) -> usize {
+        TOP_MENUS.iter().position(|menu| menu.id == id).unwrap_or(0)
+    }
+
+    fn top_menu_by_id(id: TopMenuId) -> &'static TopMenu {
+        TOP_MENUS
+            .iter()
+            .find(|menu| menu.id == id)
+            .unwrap_or(&TOP_MENUS[0])
+    }
+
+    fn click_top_menu(&mut self, id: TopMenuId, cx: &mut Context<Self>) {
+        if self.open_menu == Some(id) {
+            self.open_menu = None;
+            self.open_submenu = None;
+        } else {
+            self.open_menu = Some(id);
+            self.open_submenu = None;
+        }
+        cx.notify();
+    }
+
+    fn hover_top_menu(&mut self, id: TopMenuId, cx: &mut Context<Self>) {
+        if self.open_menu.is_some() && self.open_menu != Some(id) {
+            self.open_menu = Some(id);
+            self.open_submenu = None;
+            cx.notify();
+        }
+    }
+
+    fn hover_menu_item(&mut self, item: MenuItem, cx: &mut Context<Self>) {
+        let next = if item.submenu.is_empty() { None } else { Some(item.id) };
+        if self.open_submenu != next {
+            self.open_submenu = next;
+            cx.notify();
+        }
+    }
+
+    fn close_menu_overlay(&mut self, cx: &mut Context<Self>) {
+        if self.open_menu.is_some() || self.open_submenu.is_some() {
+            self.open_menu = None;
+            self.open_submenu = None;
+            cx.notify();
+        }
+    }
+
+    fn execute_menu_command(
+        &mut self,
+        cmd: MenuCommand,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match cmd {
+            MenuCommand::NewTextFile => {
+                self.editor_text.clear();
+                self.cursor_byte = 0;
+                self.selection.clear();
+                self.hover_byte = None;
+                self.is_dirty = false;
+                self.status = "New text buffer created".into();
+            }
+            MenuCommand::OpenFile => {
+                self.status = "Open File is not implemented yet".into();
+            }
+            MenuCommand::OpenFolder => self.open_project_dialog(window, cx),
+            MenuCommand::Save => self.save_active_file(cx),
+            MenuCommand::Exit => {
+                self.status = "Exit is not implemented yet".into();
+            }
+            MenuCommand::Undo => {
+                self.status = "Undo is not implemented yet".into();
+            }
+            MenuCommand::Redo => {
+                self.status = "Redo is not implemented yet".into();
+            }
+            MenuCommand::Cut => {
+                self.status = "Cut is not implemented yet".into();
+            }
+            MenuCommand::Copy => {
+                self.status = "Copy is not implemented yet".into();
+            }
+            MenuCommand::Paste => {
+                self.status = "Paste is not implemented yet".into();
+            }
+            MenuCommand::Find => {
+                self.status = "Find is not implemented yet".into();
+            }
+            MenuCommand::Replace => {
+                self.status = "Replace is not implemented yet".into();
+            }
+            MenuCommand::SelectAll => {
+                let layout = self.editor_text_layout();
+                let last_line = layout.line_count().saturating_sub(1);
+                let last_col = layout.line_len(last_line);
+                self.selection.anchor = Some(TextPoint { line: 0, column: 0 });
+                self.selection.head = Some(TextPoint {
+                    line: last_line,
+                    column: last_col,
+                });
+                self.cursor_byte = self.editor_text.len();
+                self.refresh_status();
+            }
+            MenuCommand::ExpandSelection => {
+                let layout = self.editor_text_layout();
+                let current = layout.byte_to_point(self.cursor_byte);
+                let next = TextPoint {
+                    line: current.line,
+                    column: (current.column + 1).min(layout.line_len(current.line)),
+                };
+                self.selection.anchor = Some(current);
+                self.selection.head = Some(next);
+                self.cursor_byte = layout.point_to_byte(next);
+                self.refresh_status();
+            }
+            MenuCommand::CommandPalette => {
+                self.status = "Command Palette is not implemented yet".into();
+            }
+            MenuCommand::AppearancePanel => {
+                self.status = "Appearance submenu opened".into();
+            }
+            MenuCommand::ZoomIn => {
+                self.status = "Zoom In is not implemented yet".into();
+            }
+            MenuCommand::ZoomOut => {
+                self.status = "Zoom Out is not implemented yet".into();
+            }
+            MenuCommand::ZoomReset => {
+                self.status = "Reset Zoom is not implemented yet".into();
+            }
+        }
+
+        self.open_menu = None;
+        self.open_submenu = None;
+        cx.notify();
+    }
+
     fn handle_editor_key(
         &mut self,
         event: &KeyDownEvent,
@@ -923,9 +1068,138 @@ impl VeloIde {
         let track_h = (explorer_visible_rows as f32 * 22.0).clamp(150.0, 760.0);
         let (thumb_h, thumb_top, explorer_scrollable) =
             Self::scrollbar_metrics(total, explorer_visible_rows, start, track_h);
+        let menu_overlay = if let Some(open_id) = self.open_menu {
+            let top_menu = Self::top_menu_by_id(open_id);
+            let menu_index = Self::top_menu_index(open_id);
+            let menu_left = 4.0 + (menu_index as f32 * MENU_BUTTON_WIDTH);
+            let menu_top = MENU_BAR_HEIGHT;
+
+            let mut submenu_rows: &'static [MenuItem] = &[];
+            let mut submenu_top = menu_top;
+            if let Some(open_submenu_id) = self.open_submenu {
+                if let Some((item_idx, item)) = top_menu
+                    .items
+                    .iter()
+                    .enumerate()
+                    .find(|(_, item)| item.id == open_submenu_id)
+                {
+                    submenu_rows = item.submenu;
+                    submenu_top = menu_top + (item_idx as f32 * MENU_ITEM_HEIGHT);
+                }
+            }
+
+            div()
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full()
+                .child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .size_full()
+                        .bg(rgb(0x020202))
+                        .opacity(0.01)
+                        .id("menu-click-away")
+                        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                            this.close_menu_overlay(cx);
+                        })),
+                )
+                .child(
+                    div()
+                        .id("menu-panel-main")
+                        .absolute()
+                        .top(px(menu_top))
+                        .left(px(menu_left))
+                        .w(px(MENU_PANEL_WIDTH))
+                        .rounded_md()
+                        .bg(rgb(0x1D2230))
+                        .border_1()
+                        .border_color(rgb(0x2A3549))
+                        .py_1()
+                        .flex_col()
+                        .children(top_menu.items.iter().enumerate().map(|(idx, item)| {
+                            let has_submenu = !item.submenu.is_empty();
+                            let hovered = self.open_submenu == Some(item.id);
+                            let row_item = *item;
+                            div()
+                                .id(("menu-main-row", idx))
+                                .h(px(MENU_ITEM_HEIGHT))
+                                .px_2()
+                                .flex()
+                                .items_center()
+                                .justify_between()
+                                .bg(if hovered { rgb(0x23324A) } else { rgb(0x1D2230) })
+                                .on_mouse_move(cx.listener(move |this, _: &MouseMoveEvent, _, cx| {
+                                    this.hover_menu_item(row_item, cx);
+                                }))
+                                .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                                    if let Some(cmd) = row_item.command {
+                                        this.execute_menu_command(cmd, window, cx);
+                                    } else {
+                                        this.hover_menu_item(row_item, cx);
+                                    }
+                                }))
+                                .child(div().child(item.label))
+                                .child(
+                                    div()
+                                        .text_color(rgb(0x8F98AA))
+                                        .child(if has_submenu {
+                                            ">"
+                                        } else {
+                                            item.keybinding.unwrap_or("")
+                                        }),
+                                )
+                        })),
+                )
+                .child(if submenu_rows.is_empty() {
+                    div().into_any_element()
+                } else {
+                    div()
+                        .id("menu-panel-sub")
+                        .absolute()
+                        .top(px(submenu_top))
+                        .left(px(menu_left + MENU_PANEL_WIDTH - 2.0))
+                        .w(px(MENU_PANEL_WIDTH))
+                        .rounded_md()
+                        .bg(rgb(0x1D2230))
+                        .border_1()
+                        .border_color(rgb(0x2A3549))
+                        .py_1()
+                        .flex_col()
+                        .children(submenu_rows.iter().enumerate().map(|(idx, item)| {
+                            let row_item = *item;
+                            div()
+                                .id(("menu-sub-row", idx))
+                                .h(px(MENU_ITEM_HEIGHT))
+                                .px_2()
+                                .flex()
+                                .items_center()
+                                .justify_between()
+                                .bg(rgb(0x1D2230))
+                                .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                                    if let Some(cmd) = row_item.command {
+                                        this.execute_menu_command(cmd, window, cx);
+                                    }
+                                }))
+                                .child(div().child(item.label))
+                                .child(
+                                    div()
+                                        .text_color(rgb(0x8F98AA))
+                                        .child(item.keybinding.unwrap_or("")),
+                                )
+                        }))
+                        .into_any_element()
+                })
+                .into_any_element()
+        } else {
+            div().into_any_element()
+        };
 
         div()
             .size_full()
+            .relative()
             .bg(rgb(0x020202))
             .text_color(rgb(0xF2F5FB))
             .child(
@@ -934,21 +1208,38 @@ impl VeloIde {
                     .flex_col()
                     .child(
                         div()
-                            .h(px(28.0))
-                            .px_2()
+                            .h(px(MENU_BAR_HEIGHT))
+                            .px_1()
                             .flex()
                             .items_center()
-                            .gap_3()
+                            .gap_0()
                             .bg(rgb(0x171B24))
                             .text_color(rgb(0xB6BDCB))
-                            .child("File")
-                            .child("Edit")
-                            .child("Selection")
-                            .child("View")
-                            .child("Go")
-                            .child("Run")
-                            .child("Terminal")
-                            .child("Help"),
+                            .children(TOP_MENUS.iter().enumerate().map(|(menu_idx, menu)| {
+                                let is_open = self.open_menu == Some(menu.id);
+                                div()
+                                    .id(("menubar-item", menu_idx))
+                                    .w(px(MENU_BUTTON_WIDTH))
+                                    .h(px(MENU_BAR_HEIGHT))
+                                    .px_2()
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .bg(if is_open { rgb(0x23324A) } else { rgb(0x171B24) })
+                                    .on_mouse_move(cx.listener({
+                                        let id = menu.id;
+                                        move |this, _: &MouseMoveEvent, _, cx| {
+                                            this.hover_top_menu(id, cx);
+                                        }
+                                    }))
+                                    .on_click(cx.listener({
+                                        let id = menu.id;
+                                        move |this, _: &ClickEvent, _, cx| {
+                                            this.click_top_menu(id, cx);
+                                        }
+                                    }))
+                                    .child(menu.label)
+                            })),
                     )
                     .child(
                         div()
@@ -1332,6 +1623,7 @@ impl VeloIde {
                     ),
                     ),
             )
+            .child(menu_overlay)
             .id("workspace-root")
             .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _, cx| {
                 this.drag_sidebar_resize(event, cx);
@@ -1363,6 +1655,7 @@ impl Render for VeloIde {
         }
     }
 }
+
 
 
 
