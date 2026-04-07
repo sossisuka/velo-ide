@@ -818,69 +818,68 @@ impl VeloIde {
                             .flex()
                     .child(
                         div()
-                            .w(px(64.0))
+                            .w(px(72.0))
                             .h_full()
                             .bg(rgb(0x171B24))
                             .flex_col()
-                            .items_center()
                             .justify_between()
-                            .py_2()
+                            .py_0()
                             .child(
                                 div()
+                                    .w_full()
                                     .flex_col()
-                                    .items_center()
-                                    .gap_2()
+                                    .gap_0()
                                     .child(
                                         div()
-                                            .w(px(46.0))
-                                            .h(px(46.0))
+                                            .w_full()
+                                            .h(px(56.0))
                                             .bg(rgb(0x23324A))
                                             .flex()
                                             .items_center()
                                             .justify_center()
-                                            .child(img(self.icons.folder_open()).size(px(20.0))),
+                                            .child(img(self.icons.folder_open()).size(px(24.0))),
                                     )
                                     .child(
                                         div()
-                                            .w(px(46.0))
-                                            .h(px(46.0))
+                                            .w_full()
+                                            .h(px(56.0))
                                             .bg(rgb(0x1D2230))
                                             .flex()
                                             .items_center()
                                             .justify_center()
-                                            .child(img(self.icons.file()).size(px(20.0))),
+                                            .child(img(self.icons.file()).size(px(24.0))),
                                     )
                                     .child(
                                         div()
-                                            .w(px(46.0))
-                                            .h(px(46.0))
+                                            .w_full()
+                                            .h(px(56.0))
                                             .bg(rgb(0x1D2230))
                                             .flex()
                                             .items_center()
                                             .justify_center()
-                                            .child(img(self.icons.run()).size(px(20.0))),
+                                            .child(img(self.icons.run()).size(px(24.0))),
                                     ),
                             )
                             .child(
                                 div()
+                                    .w_full()
                                     .flex_col()
-                                    .items_center()
-                                    .gap_2()
+                                    .gap_0()
                                     .child(
                                         div()
-                                            .w(px(46.0))
-                                            .h(px(46.0))
+                                            .w_full()
+                                            .h(px(56.0))
                                             .bg(rgb(0x1D2230))
                                             .flex()
                                             .items_center()
                                             .justify_center()
-                                            .child(img(self.icons.settings()).size(px(20.0))),
+                                            .child(img(self.icons.settings()).size(px(24.0))),
                                     ),
                             ),
                     )
                     .child(
                         div()
-                            .w(px((self.sidebar_width - 50.0).max(220.0)))
+                            .w(px((self.sidebar_width - 58.0).max(220.0)))
                             .h_full()
                             .p_2()
                             .overflow_hidden()
