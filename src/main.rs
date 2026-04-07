@@ -8,10 +8,14 @@ use gpui::{
 use ui::app::{Icons, VeloIde};
 
 fn main() {
-    let icons_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    let file_icons_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("assets")
         .join("icons")
         .join("bearded");
+    let activity_icons_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .map(|p| p.join("icons"))
+        .unwrap_or_else(|| PathBuf::from("icons"));
 
     Application::new().run(move |cx: &mut App| {
         let window_bounds = Bounds::centered(None, size(px(1360.0), px(860.0)), cx);
@@ -25,7 +29,9 @@ fn main() {
                 }),
                 ..Default::default()
             },
-            move |_window, cx| cx.new(|cx| VeloIde::new(Icons::from_dir(&icons_dir), cx)),
+            move |_window, cx| {
+                cx.new(|cx| VeloIde::new(Icons::from_dirs(&file_icons_dir, &activity_icons_dir), cx))
+            },
         )
         .expect("failed to open Velo window");
     });

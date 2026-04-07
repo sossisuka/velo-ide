@@ -27,50 +27,72 @@ use gpui::{
 
 #[derive(Clone)]
 pub struct Icons {
-    base: PathBuf,
+    file_icons_base: PathBuf,
+    activity_icons_base: PathBuf,
 }
 
 impl Icons {
-    pub fn from_dir(dir: &Path) -> Self {
+    pub fn from_dirs(file_icons_dir: &Path, activity_icons_dir: &Path) -> Self {
         Self {
-            base: dir.to_path_buf(),
+            file_icons_base: file_icons_dir.to_path_buf(),
+            activity_icons_base: activity_icons_dir.to_path_buf(),
         }
     }
 
     fn by_name(&self, name: &str) -> PathBuf {
-        self.base.join(format!("{name}.svg"))
+        self.file_icons_base.join(format!("{name}.svg"))
+    }
+
+    fn activity_png(&self, name: &str) -> PathBuf {
+        self.activity_icons_base.join(format!("{name}.png"))
+    }
+
+    fn back(&self) -> PathBuf {
+        self.activity_png("back")
+    }
+
+    fn next(&self) -> PathBuf {
+        self.activity_png("next")
+    }
+
+    fn close_tab(&self) -> PathBuf {
+        self.activity_png("close")
+    }
+
+    fn add(&self) -> PathBuf {
+        self.activity_png("add")
     }
 
     fn folder(&self) -> PathBuf {
-        self.by_name("folder")
+        self.activity_png("folder")
     }
 
     fn folder_open(&self) -> PathBuf {
-        self.by_name("folder_open")
+        self.activity_png("folder")
     }
 
     fn settings(&self) -> PathBuf {
-        self.by_name("editorconfig")
+        self.activity_png("settings")
     }
 
     fn activity_explorer(&self) -> PathBuf {
-        self.by_name("activity_explorer")
+        self.activity_png("folder")
     }
 
     fn activity_search(&self) -> PathBuf {
-        self.by_name("activity_search")
+        self.activity_png("menu")
     }
 
     fn activity_source_control(&self) -> PathBuf {
-        self.by_name("activity_source_control")
+        self.activity_png("refresh")
     }
 
     fn activity_run(&self) -> PathBuf {
-        self.by_name("activity_run")
+        self.activity_png("play")
     }
 
     fn activity_extensions(&self) -> PathBuf {
-        self.by_name("activity_extensions")
+        self.activity_png("plus")
     }
 }
 
@@ -104,6 +126,7 @@ pub struct VeloIde {
     editor_scroll: f32,
     editor_hscroll: f32,
     tab_scroll: usize,
+    last_viewport_width: f32,
 
     core: EditorCore,
     hover_byte: Option<usize>,
@@ -140,6 +163,7 @@ impl VeloIde {
             editor_scroll: 0.0,
             editor_hscroll: 0.0,
             tab_scroll: 0,
+            last_viewport_width: 1360.0,
             core: EditorCore::new(),
             hover_byte: None,
             open_menu: None,
@@ -198,6 +222,41 @@ impl VeloIde {
         cx.notify();
     }
 
+    fn close_file_tab(&mut self, idx: usize, cx: &mut Context<Self>) {
+        let Some(pos) = self.workspace.open_tabs.iter().position(|tab| *tab == idx) else {
+            return;
+        };
+        self.workspace.open_tabs.remove(pos);
+
+        if self.workspace.active_index == Some(idx) {
+            if self.workspace.open_tabs.is_empty() {
+                self.workspace.active_index = None;
+                self.core.clear();
+                self.status = "No file open".into();
+            } else {
+                let next_pos = pos.min(self.workspace.open_tabs.len().saturating_sub(1));
+                let next_idx = self.workspace.open_tabs[next_pos];
+                self.workspace.active_index = Some(next_idx);
+                if let Some(file) = self.workspace.files.get(next_idx) {
+                    if let Ok(raw) = fs::read_to_string(&file.abs_path) {
+                        let normalized = raw.replace("\r\n", "\n").replace('\r', "\n");
+                        self.core.set_text(normalized);
+                        self.status = format!("Opened {}", file.rel_path).into();
+                    } else if let Ok(decoded) = decode_text_file(&file.abs_path) {
+                        let normalized = decoded.text.replace("\r\n", "\n").replace('\r', "\n");
+                        self.core.set_text(normalized);
+                        self.status = format!("Opened {}", file.rel_path).into();
+                    }
+                }
+            }
+        } else {
+            self.status = "Tab closed".into();
+        }
+
+        self.tab_scroll = self.tab_scroll.min(self.workspace.open_tabs.len().saturating_sub(1));
+        cx.notify();
+    }
+
     fn save_active_file(&mut self, cx: &mut Context<Self>) {
         match workspace_io::save_active_file(&self.workspace, &mut self.core) {
             SaveResult::NoFileSelected => {
@@ -215,7 +274,9 @@ impl VeloIde {
     }
 
     fn clamp_sidebar_width(&mut self) {
-        self.sidebar_width = self.sidebar_width.clamp(220.0, 520.0);
+        let min_sidebar = 220.0;
+        let max_sidebar = (self.last_viewport_width - 420.0).max(min_sidebar);
+        self.sidebar_width = self.sidebar_width.clamp(min_sidebar, max_sidebar);
     }
 
     fn start_sidebar_resize(&mut self, event: &MouseDownEvent) {
@@ -228,7 +289,7 @@ impl VeloIde {
     }
 
     fn drag_sidebar_resize(&mut self, event: &MouseMoveEvent, cx: &mut Context<Self>) {
-        if !self.resizing_sidebar || !event.dragging() {
+        if !self.resizing_sidebar {
             return;
         }
         let dx = f32::from(event.position.x) - self.resize_start_x;
@@ -242,6 +303,12 @@ impl VeloIde {
             return;
         }
         self.resizing_sidebar = false;
+        cx.notify();
+    }
+
+    fn reset_sidebar_width(&mut self, cx: &mut Context<Self>) {
+        self.sidebar_width = 300.0;
+        self.clamp_sidebar_width();
         cx.notify();
     }
 
@@ -636,104 +703,128 @@ impl VeloIde {
 
         div()
             .size_full()
-            .bg(rgb(0x0B0F14))
-            .text_color(rgb(0xD5DCEA))
-            .flex()
-            .items_center()
-            .justify_center()
+            .bg(rgb(0x121212))
+            .text_color(rgb(0xCCCCCC))
+            .flex_col()
             .child(
                 div()
-                    .w(px(980.0))
-                    .h(px(620.0))
-                    .rounded_xl()
-                    .border_1()
-                    .border_color(rgb(0x242A35))
-                    .bg(rgb(0x11161E))
-                    .overflow_hidden()
+                    .h(px(34.0))
+                    .w_full()
+                    .bg(rgb(0x181818))
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .px_3()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_4()
+                            .child("File")
+                            .child("Edit")
+                            .child("Selection")
+                            .child("View")
+                            .child("Go")
+                            .child("Run")
+                            .child("Terminal")
+                            .child("Help"),
+                    )
+                    .child(
+                        div()
+                            .text_color(rgb(0x727272))
+                            .child("VeloCode"),
+                    ),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .w_full()
                     .flex()
                     .child(
                         div()
-                            .w(px(320.0))
+                            .w(px(260.0))
                             .h_full()
-                            .p_6()
+                            .bg(rgb(0x181818))
+                            .p_3()
                             .flex_col()
-                            .justify_between()
-                            .bg(rgb(0x0E131B))
+                            .gap_2()
+                            .child(div().text_color(rgb(0x727272)).child("WELCOME"))
                             .child(
                                 div()
-                                    .flex_col()
-                                    .gap_2()
-                                    .child(
-                                        div()
-                                            .w(px(52.0))
-                                            .h(px(52.0))
-                                            .rounded_lg()
-                                            .bg(rgb(0x1F6FEB))
-                                            .flex()
-                                            .items_center()
-                                            .justify_center()
-                                            .child("V"),
-                                    )
-                                    .child("Velo")
-                                    .child("The editor for high velocity coding")
-                                    .child("Rust + GPUI"),
+                                    .px_3()
+                                    .py_2()
+                                    .rounded_sm()
+                                    .bg(rgb(0x202020))
+                                    .child("Start"),
                             )
                             .child(
                                 div()
-                                    .flex_col()
-                                    .gap_2()
-                                    .child("Tips")
-                                    .child("Ctrl+O  Open folder")
-                                    .child("Ctrl+S  Save file")
-                                    .child("Ctrl+Z / Ctrl+Shift+Z  Undo / Redo"),
+                                    .px_3()
+                                    .py_2()
+                                    .rounded_sm()
+                                    .bg(rgb(0x121212))
+                                    .child("Recent Projects"),
+                            )
+                            .child(
+                                div()
+                                    .px_3()
+                                    .py_2()
+                                    .rounded_sm()
+                                    .bg(rgb(0x121212))
+                                    .child("Documentation"),
                             ),
                     )
                     .child(
                         div()
                             .flex_1()
                             .h_full()
-                            .p_6()
+                            .p_8()
                             .flex_col()
                             .gap_4()
+                            .child("Welcome to Velo")
+                            .child(div().text_color(rgb(0x727272)).child("Zed-style Start"))
                             .child(
                                 div()
-                                    .flex()
-                                    .items_center()
-                                    .justify_between()
-                                    .child("Welcome to Velo")
-                                    .child("Zed-style Start"),
-                            )
-                            .child(
-                                div()
-                                    .flex()
+                                    .w(px(680.0))
+                                    .max_w_full()
+                                    .flex_col()
                                     .gap_2()
                                     .child(
                                         div()
+                                            .w_full()
                                             .flex()
                                             .items_center()
-                                            .gap_2()
+                                            .justify_between()
                                             .px_3()
                                             .py_2()
                                             .rounded_md()
-                                            .bg(rgb(0x1A2330))
+                                            .bg(rgb(0x202020))
                                             .id("welcome-open-folder")
                                             .on_click(cx.listener(
                                                 |this, _: &ClickEvent, window, cx| {
                                                     this.open_project_dialog(window, cx);
                                                 },
                                             ))
-                                            .child(img(self.icons.folder_open()).size(px(16.0)))
-                                            .child("Open Folder"),
+                                            .child(
+                                                div()
+                                                    .flex()
+                                                    .items_center()
+                                                    .gap_2()
+                                                    .child(img(self.icons.folder_open()).size(px(16.0)))
+                                                    .child("Open Folder"),
+                                            )
+                                            .child(div().text_color(rgb(0x727272)).child("Ctrl+O")),
                                     )
                                     .child(
                                         div()
+                                            .w_full()
                                             .flex()
                                             .items_center()
-                                            .gap_2()
+                                            .justify_between()
                                             .px_3()
                                             .py_2()
                                             .rounded_md()
-                                            .bg(rgb(0x1A2330))
+                                            .bg(rgb(0x202020))
                                             .id("welcome-new-buffer")
                                             .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                                                 this.core.clear();
@@ -741,68 +832,55 @@ impl VeloIde {
                                                 this.status = "New buffer".into();
                                                 cx.notify();
                                             }))
-                                            .child("New File"),
+                                            .child(
+                                                div()
+                                                    .flex()
+                                                    .items_center()
+                                                    .gap_2()
+                                                    .child(img(self.icons.add()).size(px(14.0)))
+                                                    .child("New File"),
+                                            )
+                                            .child(div().text_color(rgb(0x727272)).child("Ctrl+N")),
                                     ),
                             )
+                            .child(div().text_color(rgb(0x727272)).child("RECENT"))
                             .child(
                                 div()
-                                    .flex_1()
-                                    .rounded_lg()
-                                    .border_1()
-                                    .border_color(rgb(0x242A35))
-                                    .bg(rgb(0x0F141C))
-                                    .p_4()
+                                    .w(px(680.0))
+                                    .max_w_full()
                                     .flex_col()
-                                    .gap_2()
-                                    .child("Recent Projects")
+                                    .gap_1()
                                     .children(recent_items.iter().enumerate().map(
                                         |(idx, item)| {
                                             div()
+                                                .w_full()
                                                 .flex()
                                                 .items_center()
                                                 .justify_between()
-                                                .gap_2()
                                                 .px_3()
                                                 .py_2()
-                                                .rounded_md()
-                                                .bg(rgb(0x171D27))
+                                                .rounded_sm()
+                                                .bg(rgb(0x181818))
                                                 .id(("welcome-recent", idx))
                                                 .child(div().truncate().child(item.clone()))
-                                                .child("Open")
+                                                .child(div().text_color(rgb(0x727272)).child("Open"))
                                         },
                                     )),
-                            )
-                            .child(
-                                div()
-                                    .rounded_lg()
-                                    .border_1()
-                                    .border_color(rgb(0x242A35))
-                                    .bg(rgb(0x0F141C))
-                                    .p_4()
-                                    .flex_col()
-                                    .gap_2()
-                                    .child("Shortcuts")
-                                    .child("Ctrl+P  Quick Open")
-                                    .child("Ctrl+Shift+P  Command Palette")
-                                    .child("Ctrl+`  Toggle Terminal (planned)"),
                             ),
                     ),
             )
             .child(
                 div()
-                    .absolute()
-                    .bottom(px(18.0))
-                    .right(px(20.0))
-                    .text_color(rgb(0x6C778B))
-                    .child("Velo Welcome"),
-            )
-            .child(
-                div()
-                    .absolute()
-                    .top(px(14.0))
-                    .left(px(18.0))
-                    .text_color(rgb(0x6C778B))
-                    .child("File  Edit  Selection  View  Go  Run  Terminal  Help"),
+                    .h(px(22.0))
+                    .w_full()
+                    .px_3()
+                    .bg(rgb(0x121212))
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .text_color(rgb(0x727272))
+                    .child("velo")
+                    .child("Welcome"),
             )
             .into_any_element()
     }
@@ -810,6 +888,8 @@ impl VeloIde {
     fn render_workspace(&mut self, cx: &mut Context<Self>, window: &mut Window) -> AnyElement {
         let viewport_w = f32::from(window.viewport_size().width);
         let viewport_h = f32::from(window.viewport_size().height);
+        self.last_viewport_width = viewport_w;
+        self.clamp_sidebar_width();
         let entries = self.workspace.visible_entries();
         let explorer_view = compute_explorer_view(entries.len(), viewport_h, self.explorer_scroll);
         self.explorer_scroll = explorer_view.scroll;
@@ -927,12 +1007,13 @@ impl VeloIde {
             )
         };
 
+        let has_selection = !selection_ranges.is_empty();
         let selection_overlay = StyledText::new(editor_text_to_render).with_highlights(
             selection_ranges.into_iter().map(|range| {
                 (
                     range,
                     HighlightStyle {
-                        background_color: Some(rgb(0x31456D).into()),
+                        background_color: Some(rgb(0x1F3F5E).into()),
                         ..Default::default()
                     },
                 )
@@ -1000,7 +1081,7 @@ impl VeloIde {
                         .top_0()
                         .left_0()
                         .size_full()
-                        .bg(rgb(0x020202))
+                        .bg(rgb(0x121212))
                         .opacity(0.01)
                         .id("menu-click-away")
                         .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
@@ -1015,9 +1096,9 @@ impl VeloIde {
                         .left(px(menu_left))
                         .w(px(MENU_PANEL_WIDTH))
                         .rounded_md()
-                        .bg(rgb(0x1D2230))
+                        .bg(rgb(0x181818))
                         .border_1()
-                        .border_color(rgb(0x2A3549))
+                        .border_color(rgb(0x3C3C3C))
                         .py_1()
                         .flex_col()
                         .children(top_menu.items.iter().enumerate().map(|(idx, item)| {
@@ -1032,9 +1113,9 @@ impl VeloIde {
                                 .items_center()
                                 .justify_between()
                                 .bg(if hovered {
-                                    rgb(0x23324A)
+                                    rgb(0x073A5A)
                                 } else {
-                                    rgb(0x1D2230)
+                                    rgb(0x181818)
                                 })
                                 .on_mouse_move(cx.listener(
                                     move |this, _: &MouseMoveEvent, _, cx| {
@@ -1049,7 +1130,7 @@ impl VeloIde {
                                     }
                                 }))
                                 .child(div().child(item.label))
-                                .child(div().text_color(rgb(0x8F98AA)).child(if has_submenu {
+                                .child(div().text_color(rgb(0x6F6F6F)).child(if has_submenu {
                                     ">"
                                 } else {
                                     item.keybinding.unwrap_or("")
@@ -1066,9 +1147,9 @@ impl VeloIde {
                         .left(px(menu_left + MENU_PANEL_WIDTH - 2.0))
                         .w(px(MENU_PANEL_WIDTH))
                         .rounded_md()
-                        .bg(rgb(0x1D2230))
+                        .bg(rgb(0x181818))
                         .border_1()
-                        .border_color(rgb(0x2A3549))
+                        .border_color(rgb(0x3C3C3C))
                         .py_1()
                         .flex_col()
                         .children(submenu_rows.iter().enumerate().map(|(idx, item)| {
@@ -1080,7 +1161,7 @@ impl VeloIde {
                                 .flex()
                                 .items_center()
                                 .justify_between()
-                                .bg(rgb(0x1D2230))
+                                .bg(rgb(0x181818))
                                 .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                                     if let Some(cmd) = row_item.command {
                                         this.execute_menu_command(cmd, window, cx);
@@ -1089,7 +1170,7 @@ impl VeloIde {
                                 .child(div().child(item.label))
                                 .child(
                                     div()
-                                        .text_color(rgb(0x8F98AA))
+                                        .text_color(rgb(0x6F6F6F))
                                         .child(item.keybinding.unwrap_or("")),
                                 )
                         }))
@@ -1103,8 +1184,8 @@ impl VeloIde {
         div()
             .size_full()
             .relative()
-            .bg(rgb(0x020202))
-            .text_color(rgb(0xF2F5FB))
+            .bg(rgb(0x121212))
+            .text_color(rgb(0xCCCCCC))
             .child(
                 div()
                     .size_full()
@@ -1116,8 +1197,8 @@ impl VeloIde {
                             .flex()
                             .items_center()
                             .gap_0()
-                            .bg(rgb(0x171B24))
-                            .text_color(rgb(0xB6BDCB))
+                            .bg(rgb(0x121212))
+                            .text_color(rgb(0x666666))
                             .children(TOP_MENUS.iter().enumerate().map(|(menu_idx, menu)| {
                                 let is_open = self.open_menu == Some(menu.id);
                                 div()
@@ -1128,7 +1209,7 @@ impl VeloIde {
                                     .flex()
                                     .items_center()
                                     .justify_center()
-                                    .bg(if is_open { rgb(0x23324A) } else { rgb(0x171B24) })
+                                    .bg(if is_open { rgb(0x073A5A) } else { rgb(0x121212) })
                                     .on_mouse_move(cx.listener({
                                         let id = menu.id;
                                         move |this, _: &MouseMoveEvent, _, cx| {
@@ -1152,7 +1233,7 @@ impl VeloIde {
                         div()
                             .w(px(72.0))
                             .h_full()
-                            .bg(rgb(0x171B24))
+                            .bg(rgb(0x121212))
                             .flex_col()
                             .justify_between()
                             .py_0()
@@ -1165,7 +1246,7 @@ impl VeloIde {
                                         div()
                                             .w_full()
                                             .h(px(56.0))
-                                            .bg(rgb(0x23324A))
+                                            .bg(rgb(0x073A5A))
                                             .flex()
                                             .items_center()
                                             .justify_center()
@@ -1175,7 +1256,7 @@ impl VeloIde {
                                         div()
                                             .w_full()
                                             .h(px(56.0))
-                                            .bg(rgb(0x1D2230))
+                                            .bg(rgb(0x181818))
                                             .flex()
                                             .items_center()
                                             .justify_center()
@@ -1185,7 +1266,7 @@ impl VeloIde {
                                         div()
                                             .w_full()
                                             .h(px(56.0))
-                                            .bg(rgb(0x1D2230))
+                                            .bg(rgb(0x181818))
                                             .flex()
                                             .items_center()
                                             .justify_center()
@@ -1197,7 +1278,7 @@ impl VeloIde {
                                         div()
                                             .w_full()
                                             .h(px(56.0))
-                                            .bg(rgb(0x1D2230))
+                                            .bg(rgb(0x181818))
                                             .flex()
                                             .items_center()
                                             .justify_center()
@@ -1207,7 +1288,7 @@ impl VeloIde {
                                         div()
                                             .w_full()
                                             .h(px(56.0))
-                                            .bg(rgb(0x1D2230))
+                                            .bg(rgb(0x181818))
                                             .flex()
                                             .items_center()
                                             .justify_center()
@@ -1223,7 +1304,7 @@ impl VeloIde {
                                         div()
                                             .w_full()
                                             .h(px(56.0))
-                                            .bg(rgb(0x1D2230))
+                                            .bg(rgb(0x181818))
                                             .flex()
                                             .items_center()
                                             .justify_center()
@@ -1233,11 +1314,11 @@ impl VeloIde {
                     )
                     .child(
                         div()
-                            .w(px((self.sidebar_width - 58.0).max(220.0)))
+                            .w(px((self.sidebar_width - 58.0).max(150.0)))
                             .h_full()
                             .p_2()
                             .overflow_hidden()
-                            .bg(rgb(0x1D2230))
+                            .bg(rgb(0x181818))
                             .flex_col()
                             .gap_1()
                             .child(
@@ -1253,8 +1334,8 @@ impl VeloIde {
                                     .px_2()
                                     .py(px(2.0))
                                     .rounded_sm()
-                                    .bg(rgb(0x171B24))
-                                    .text_color(rgb(0x4FAEFF))
+                                    .bg(rgb(0x121212))
+                                    .text_color(rgb(0x3794FF))
                                     .child("Explorer"),
                             )
                             .child(
@@ -1284,7 +1365,7 @@ impl VeloIde {
                                                     .px_2()
                                                     .py(px(2.0))
                                                     .rounded_sm()
-                                                    .bg(rgb(0x171B24))
+                                                    .bg(rgb(0x121212))
                                                     .id(("explorer-folder", row_id))
                                                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                                                         this.workspace.toggle_folder(&folder);
@@ -1306,7 +1387,7 @@ impl VeloIde {
                                                     .px_2()
                                                     .py(px(2.0))
                                                     .rounded_sm()
-                                                    .bg(if selected { rgb(0x23324A) } else { rgb(0x171B24) })
+                                                    .bg(if selected { rgb(0x073A5A) } else { rgb(0x121212) })
                                                     .id(("explorer-file", row_id))
                                                     .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                                                         this.open_file_at(idx, window, cx);
@@ -1324,7 +1405,7 @@ impl VeloIde {
                                             .w(px(8.0))
                                             .h(px(explorer_view.track_h))
                                             .rounded_md()
-                                            .bg(rgb(0x222A3A))
+                                            .bg(rgb(0x1B1D1E))
                                             .child(
                                                 div()
                                                     .w(px(8.0))
@@ -1332,9 +1413,9 @@ impl VeloIde {
                                                     .mt(px(thumb_top))
                                                     .rounded_md()
                                                     .bg(if explorer_scrollable {
-                                                        rgb(0x8F98AA)
+                                                        rgb(0x6F6F6F)
                                                     } else {
-                                                        rgb(0x222A3A)
+                                                        rgb(0x1B1D1E)
                                                     }),
                                             ),
                                     ),
@@ -1344,8 +1425,13 @@ impl VeloIde {
                         div()
                             .w(px(6.0))
                             .h_full()
-                            .bg(rgb(0x222A3A))
+                            .bg(rgb(0x1B1D1E))
                             .id("sidebar-splitter")
+                            .on_click(cx.listener(|this, event: &ClickEvent, _, cx| {
+                                if event.click_count() >= 2 {
+                                    this.reset_sidebar_width(cx);
+                                }
+                            }))
                             .on_mouse_down(
                                 MouseButton::Left,
                                 cx.listener(|this, event: &MouseDownEvent, _, cx| {
@@ -1371,7 +1457,7 @@ impl VeloIde {
                                             .w(px(28.0))
                                             .h(px(28.0))
                                             .rounded_md()
-                                            .bg(rgb(0x171B24))
+                                            .bg(rgb(0x121212))
                                             .flex()
                                             .items_center()
                                             .justify_center()
@@ -1380,7 +1466,7 @@ impl VeloIde {
                                                 this.tab_scroll = this.tab_scroll.saturating_sub(1);
                                                 cx.notify();
                                             }))
-                                            .child("←"),
+                                            .child(img(self.icons.back()).size(px(14.0))),
                                     )
                                     .child(
                                         div()
@@ -1398,23 +1484,60 @@ impl VeloIde {
                                                 div()
                                                     .flex_shrink_0()
                                                     .flex()
+                                                    .flex_col()
                                                     .items_center()
-                                                    .gap_2()
                                                     .overflow_hidden()
-                                                    .px_3()
-                                                    .py_1()
                                                     .w(px(150.0))
                                                     .rounded_md()
-                                                    .bg(if selected { rgb(0x23324A) } else { rgb(0x171B24) })
+                                                    .bg(if selected { rgb(0x073A5A) } else { rgb(0x121212) })
                                                     .id(("tab", *tab_idx))
-                                                    .on_click(cx.listener({
-                                                        let tab_idx = *tab_idx;
-                                                        move |this, _: &ClickEvent, window, cx| {
-                                                            this.open_file_at(tab_idx, window, cx);
-                                                        }
-                                                    }))
-                                                    .child(img(this_icon(&self.icons, file)).size(px(16.0)))
-                                                    .child(div().flex_1().truncate().child(label))
+                                                    .child(
+                                                        div()
+                                                            .w_full()
+                                                            .flex()
+                                                            .items_center()
+                                                            .gap_2()
+                                                            .px_3()
+                                                            .py_1()
+                                                            .child(img(this_icon(&self.icons, file)).size(px(16.0)))
+                                                            .child(
+                                                                div()
+                                                                    .flex_1()
+                                                                    .truncate()
+                                                                    .id(("tab-open", *tab_idx))
+                                                                    .on_click(cx.listener({
+                                                                        let tab_idx = *tab_idx;
+                                                                        move |this, _: &ClickEvent, window, cx| {
+                                                                            this.open_file_at(tab_idx, window, cx);
+                                                                        }
+                                                                    }))
+                                                                    .child(label),
+                                                            )
+                                                            .child(
+                                                                div()
+                                                                    .w(px(18.0))
+                                                                    .h(px(18.0))
+                                                                    .rounded_sm()
+                                                                    .bg(if selected { rgb(0x073A5A) } else { rgb(0x121212) })
+                                                                    .flex()
+                                                                    .items_center()
+                                                                    .justify_center()
+                                                                    .id(("tab-close", *tab_idx))
+                                                                    .on_click(cx.listener({
+                                                                        let tab_idx = *tab_idx;
+                                                                        move |this, _: &ClickEvent, _, cx| {
+                                                                            this.close_file_tab(tab_idx, cx);
+                                                                        }
+                                                                    }))
+                                                                    .child(img(self.icons.close_tab()).size(px(10.0))),
+                                                            ),
+                                                    )
+                                                    .child(
+                                                        div()
+                                                            .w_full()
+                                                            .h(px(2.0))
+                                                            .bg(if selected { rgb(0x3794FF) } else { rgb(0x121212) }),
+                                                    )
                                             })),
                                     )
                                     .child(
@@ -1422,7 +1545,7 @@ impl VeloIde {
                                             .w(px(28.0))
                                             .h(px(28.0))
                                             .rounded_md()
-                                            .bg(rgb(0x171B24))
+                                            .bg(rgb(0x121212))
                                             .flex()
                                             .items_center()
                                             .justify_center()
@@ -1431,14 +1554,14 @@ impl VeloIde {
                                                 this.tab_scroll = this.tab_scroll.saturating_add(1);
                                                 cx.notify();
                                             }))
-                                            .child("→"),
+                                            .child(img(self.icons.next()).size(px(14.0))),
                                     ),
                             )
                             .child(
                                 div()
                                     .flex_1()
                                     .rounded_md()
-                                    .bg(rgb(0x171B24))
+                                    .bg(rgb(0x121212))
                                     .p_2()
                                     .flex_col()
                                     .gap_1()
@@ -1462,7 +1585,7 @@ impl VeloIde {
                                                 div()
                                                     .flex_1()
                                                     .rounded_sm()
-                                                    .bg(rgb(0x1D2230))
+                                                    .bg(rgb(0x181818))
                                                     .p_2()
                                                     .overflow_hidden()
                                                     .child(
@@ -1475,8 +1598,8 @@ impl VeloIde {
                                                                 div()
                                                                     .w(px(52.0))
                                                                     .h_full()
-                                                                    .bg(rgb(0x171B24))
-                                                                    .text_color(rgb(0x69748A))
+                                                                    .bg(rgb(0x121212))
+                                                                    .text_color(rgb(0x727272))
                                                                     .text_right()
                                                                     .px_2()
                                                                     .child(editor_line_numbers),
@@ -1515,20 +1638,23 @@ impl VeloIde {
                                                                             .top_0()
                                                                             .left_0()
                                                                             .size_full()
-                                                                            .text_color(rgb(0xC7D0E0))
+                                                                            .text_color(rgb(0xD4D4D4))
                                                                             .font_family("Consolas")
                                                                             .child(editor_plain_text.clone()),
                                                                     )
-                                                                    .child(
+                                                                    .child(if has_selection {
                                                                         div()
                                                                             .absolute()
                                                                             .top_0()
                                                                             .left_0()
                                                                             .size_full()
-                                                                                    .text_color(rgb(0xC7D0E0))
-                                                                                    .font_family("Consolas")
-                                                                                    .child(selection_overlay),
-                                                                    ),
+                                                                            .text_color(rgb(0xD4D4D4))
+                                                                            .font_family("Consolas")
+                                                                            .child(selection_overlay)
+                                                                            .into_any_element()
+                                                                    } else {
+                                                                        div().into_any_element()
+                                                                    }),
                                                             ),
                                                     ),
                                             )
@@ -1537,7 +1663,7 @@ impl VeloIde {
                                                     .w(px(10.0))
                                                     .h(px(editor_view.track_h))
                                                     .rounded_md()
-                                                    .bg(rgb(0x222A3A))
+                                                    .bg(rgb(0x1B1D1E))
                                                     .child(
                                                         div()
                                                             .w(px(10.0))
@@ -1545,9 +1671,9 @@ impl VeloIde {
                                                             .mt(px(editor_thumb_top))
                                                             .rounded_md()
                                                             .bg(if editor_scrollable {
-                                                                rgb(0xB6BDCB)
+                                                                rgb(0x666666)
                                                             } else {
-                                                                rgb(0x222A3A)
+                                                                rgb(0x1B1D1E)
                                                             }),
                                                     ),
                                             )
@@ -1557,7 +1683,7 @@ impl VeloIde {
                                             .h(px(10.0))
                                             .w_full()
                                             .rounded_md()
-                                            .bg(rgb(0x222A3A))
+                                            .bg(rgb(0x1B1D1E))
                                             .child(
                                                 div()
                                                     .h(px(10.0))
@@ -1565,9 +1691,9 @@ impl VeloIde {
                                                     .ml(px(editor_hthumb_left))
                                                     .rounded_md()
                                                     .bg(if editor_hscrollable {
-                                                        rgb(0xB6BDCB)
+                                                        rgb(0x666666)
                                                     } else {
-                                                        rgb(0x222A3A)
+                                                        rgb(0x1B1D1E)
                                                     }),
                                             ),
                                     ),
@@ -1580,8 +1706,8 @@ impl VeloIde {
                                     .flex()
                                     .items_center()
                                     .justify_between()
-                                    .bg(rgb(0x171B24))
-                                    .text_color(rgb(0x8F98AA))
+                                    .bg(rgb(0x121212))
+                                    .text_color(rgb(0x6F6F6F))
                                     .child(self.status.clone())
                                     .child(format!("{} lines | {} | GPUI", line_count, active_language)),
                             ),
@@ -1620,3 +1746,5 @@ impl Render for VeloIde {
         }
     }
 }
+
+
