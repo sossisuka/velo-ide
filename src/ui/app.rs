@@ -1,4 +1,8 @@
-﻿use crate::ui::{highlight::syntax_highlighted_text, language::language_and_icon_for};
+﻿use crate::ui::{
+    highlight::syntax_highlighted_text,
+    language::language_and_icon_for,
+    selection::{self, ScrollOffset, SelectionState, TextLayout, TextMetrics, ViewportCells},
+};
 use std::{
     collections::HashSet,
     fs,
@@ -89,6 +93,12 @@ enum Screen {
     Editor,
 }
 
+const EDITOR_LINE_HEIGHT: f32 = 18.0;
+const EDITOR_GLYPH_WIDTH: f32 = 8.2;
+const EDITOR_LEFT_PADDING: f32 = 8.0;
+const EDITOR_TOP_PADDING: f32 = 8.0;
+const EDITOR_GUTTER_WIDTH: f32 = 60.0;
+
 pub struct VeloIde {
     icons: Icons,
     screen: Screen,
@@ -110,6 +120,8 @@ pub struct VeloIde {
 
     editor_text: String,
     cursor_byte: usize,
+    selection: SelectionState,
+    hover_byte: Option<usize>,
     is_dirty: bool,
     status: SharedString,
 }
@@ -148,6 +160,8 @@ impl VeloIde {
             editor_hscroll: 0.0,
             editor_text: String::new(),
             cursor_byte: 0,
+            selection: SelectionState::default(),
+            hover_byte: None,
             is_dirty: false,
             status: "Ready".into(),
         }
@@ -172,6 +186,8 @@ impl VeloIde {
         self.active_index = None;
         self.editor_text.clear();
         self.cursor_byte = 0;
+        self.selection.clear();
+        self.hover_byte = None;
         self.editor_hscroll = 0.0;
         self.is_dirty = false;
         self.screen = Screen::Editor;
@@ -315,6 +331,8 @@ impl VeloIde {
                 self.active_index = Some(idx);
                 self.editor_text = content;
                 self.cursor_byte = 0;
+                self.selection.clear();
+                self.hover_byte = None;
                 self.editor_hscroll = 0.0;
                 if let Some(existing_pos) = self.open_tabs.iter().position(|tab| *tab == idx) {
                     self.open_tabs.remove(existing_pos);
@@ -437,8 +455,8 @@ impl VeloIde {
         (start, (start + visible).min(total))
     }
 
-    fn editor_h_window(&self, total_cols: usize) -> (usize, usize) {
-        let visible_cols = 120usize;
+    fn editor_h_window(&self, total_cols: usize, visible_cols: usize) -> (usize, usize) {
+        let visible_cols = visible_cols.max(1);
         if total_cols <= visible_cols {
             return (0, total_cols);
         }
@@ -452,6 +470,113 @@ impl VeloIde {
             .skip(start_col)
             .take(end_col.saturating_sub(start_col))
             .collect()
+    }
+
+    fn editor_text_layout(&self) -> TextLayout {
+        TextLayout::from_text(&self.editor_text)
+    }
+
+    fn editor_viewport_cells(&self, window: &Window) -> ViewportCells {
+        let viewport_w = f32::from(window.viewport_size().width);
+        let viewport_h = f32::from(window.viewport_size().height);
+        let rows = (((viewport_h - 180.0) / EDITOR_LINE_HEIGHT).floor() as usize).clamp(12, 140);
+        let cols = (((viewport_w - self.sidebar_width - 170.0) / EDITOR_GLYPH_WIDTH).floor()
+            as usize)
+            .clamp(24, 320);
+        ViewportCells { rows, cols }
+    }
+
+    fn editor_scroll_offset(&self, layout: &TextLayout, viewport: ViewportCells) -> ScrollOffset {
+        let max_line_start = layout.line_count().saturating_sub(viewport.rows.max(1));
+        let max_col_start = layout.max_line_len().saturating_sub(viewport.cols.max(1));
+
+        ScrollOffset {
+            line: self
+                .editor_scroll
+                .floor()
+                .clamp(0.0, max_line_start as f32) as usize,
+            column: self
+                .editor_hscroll
+                .floor()
+                .clamp(0.0, max_col_start as f32) as usize,
+        }
+    }
+
+    fn editor_text_metrics(&self) -> TextMetrics {
+        TextMetrics {
+            line_height: EDITOR_LINE_HEIGHT,
+            glyph_width: EDITOR_GLYPH_WIDTH,
+            left_padding: EDITOR_LEFT_PADDING,
+            top_padding: EDITOR_TOP_PADDING,
+            gutter_width: EDITOR_GUTTER_WIDTH,
+        }
+    }
+
+    fn hit_test_editor(&self, x: f32, y: f32, window: &Window) -> (TextLayout, usize) {
+        let layout = self.editor_text_layout();
+        let viewport = self.editor_viewport_cells(window);
+        let scroll = self.editor_scroll_offset(&layout, viewport);
+        let byte = selection::hover_char_index(x, y, self.editor_text_metrics(), scroll, &layout);
+        (layout, byte)
+    }
+
+    fn begin_selection_drag(
+        &mut self,
+        event: &MouseDownEvent,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.active_index.is_none() || event.button != MouseButton::Left {
+            return;
+        }
+        let x = f32::from(event.position.x);
+        let y = f32::from(event.position.y);
+        let (layout, byte) = self.hit_test_editor(x, y, window);
+        let point = layout.byte_to_point(byte);
+        self.cursor_byte = byte;
+        self.selection.begin_drag(point);
+        self.hover_byte = Some(byte);
+        self.refresh_status();
+        cx.notify();
+    }
+
+    fn update_selection_drag(
+        &mut self,
+        event: &MouseMoveEvent,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.active_index.is_none() {
+            return;
+        }
+        let x = f32::from(event.position.x);
+        let y = f32::from(event.position.y);
+        let (layout, byte) = self.hit_test_editor(x, y, window);
+
+        if self.hover_byte != Some(byte) {
+            self.hover_byte = Some(byte);
+        }
+
+        if self.selection.dragging && event.dragging() {
+            self.cursor_byte = byte;
+            self.selection.update_drag(layout.byte_to_point(byte));
+            self.refresh_status();
+            cx.notify();
+        }
+    }
+
+    fn end_selection_drag(
+        &mut self,
+        event: &MouseUpEvent,
+        _window: &Window,
+        cx: &mut Context<Self>,
+    ) {
+        if event.button != MouseButton::Left || !self.selection.dragging {
+            return;
+        }
+        self.selection.end_drag();
+        self.refresh_status();
+        cx.notify();
     }
 
     fn scrollbar_metrics(
@@ -610,13 +735,13 @@ impl VeloIde {
             .unwrap_or(self.editor_text.len());
     }
 
-    fn render_text_with_cursor(&self) -> String {
-        let mut s = self.editor_text.clone();
-        let cursor = self.cursor_byte.min(s.len());
-        if s.is_char_boundary(cursor) {
-            s.insert(cursor, '¦');
-        }
-        s
+    fn refresh_status(&mut self) {
+        let (line, col) = self.line_col_from_byte(self.cursor_byte);
+        self.status = if self.is_dirty {
+            format!("Modified (Ctrl+S to save) | Ln {}, Col {}", line + 1, col + 1).into()
+        } else {
+            format!("Ln {}, Col {}", line + 1, col + 1).into()
+        };
     }
 
     fn handle_editor_key(
@@ -667,12 +792,9 @@ impl VeloIde {
             }
         }
 
-        let (line, col) = self.line_col_from_byte(self.cursor_byte);
-        self.status = if self.is_dirty {
-            format!("Modified (Ctrl+S to save) | Ln {}, Col {}", line + 1, col + 1).into()
-        } else {
-            format!("Ln {}, Col {}", line + 1, col + 1).into()
-        };
+        self.selection.clear();
+        self.hover_byte = None;
+        self.refresh_status();
         cx.notify();
     }
 
@@ -734,7 +856,7 @@ impl VeloIde {
             .active_index
             .map(|idx| self.files[idx].language)
             .unwrap_or("text");
-        let display_text = self.render_text_with_cursor();
+        let display_text = self.editor_text.clone();
         let editor_lines: Vec<&str> = display_text.split('\n').collect();
         let editor_total = editor_lines.len().max(1);
         let max_line_cols = editor_lines
@@ -742,15 +864,18 @@ impl VeloIde {
             .map(|line| line.chars().count())
             .max()
             .unwrap_or(1);
-        let editor_visible_rows = (((viewport_h - 180.0) / 18.0).floor() as usize).clamp(12, 140);
+        let editor_visible_rows =
+            (((viewport_h - 180.0) / EDITOR_LINE_HEIGHT).floor() as usize).clamp(12, 140);
         let editor_visible_cols =
-            (((viewport_w - self.sidebar_width - 170.0) / 8.2).floor() as usize).clamp(24, 320);
+            (((viewport_w - self.sidebar_width - 170.0) / EDITOR_GLYPH_WIDTH).floor() as usize)
+                .clamp(24, 320);
         let editor_max_scroll = editor_total.saturating_sub(editor_visible_rows) as f32;
         let editor_hmax_scroll = max_line_cols.saturating_sub(editor_visible_cols) as f32;
         self.editor_scroll = self.editor_scroll.clamp(0.0, editor_max_scroll);
         self.editor_hscroll = self.editor_hscroll.clamp(0.0, editor_hmax_scroll);
         let (editor_start, editor_end) = self.editor_window(editor_total, editor_visible_rows);
-        let (editor_col_start, editor_col_end) = self.editor_h_window(max_line_cols.max(1));
+        let (editor_col_start, editor_col_end) =
+            self.editor_h_window(max_line_cols.max(1), editor_visible_cols);
         let viewport_lines = editor_lines[editor_start..editor_end]
             .iter()
             .map(|line| Self::slice_line_by_cols(line, editor_col_start, editor_col_end))
@@ -761,6 +886,20 @@ impl VeloIde {
             .map(|line| format!("{:>width$}", line + 1, width = line_number_width))
             .collect::<Vec<_>>()
             .join("\n");
+        let text_layout = TextLayout::from_text(&self.editor_text);
+        let selection_rects = selection::selection_rects(
+            &self.selection,
+            &text_layout,
+            self.editor_text_metrics(),
+            ScrollOffset {
+                line: editor_start,
+                column: editor_col_start,
+            },
+            ViewportCells {
+                rows: editor_visible_rows,
+                cols: editor_visible_cols,
+            },
+        );
         let highlighted = syntax_highlighted_text(&editor_viewport, active_language);
         let editor_track_h = (editor_visible_rows as f32 * 17.5).clamp(120.0, 820.0);
         let (editor_thumb_h, editor_thumb_top, editor_scrollable) = Self::scrollbar_metrics(
@@ -1072,9 +1211,32 @@ impl VeloIde {
                                                     .bg(rgb(0x1D2230))
                                                     .p_2()
                                                     .overflow_hidden()
+                                                    .on_mouse_down(
+                                                        MouseButton::Left,
+                                                        cx.listener(
+                                                            |this, event: &MouseDownEvent, window, cx| {
+                                                                window.focus(&this.editor_focus);
+                                                                this.begin_selection_drag(event, window, cx);
+                                                            },
+                                                        ),
+                                                    )
+                                                    .on_mouse_move(cx.listener(
+                                                        |this, event: &MouseMoveEvent, window, cx| {
+                                                            this.update_selection_drag(event, window, cx);
+                                                        },
+                                                    ))
+                                                    .on_mouse_up(
+                                                        MouseButton::Left,
+                                                        cx.listener(
+                                                            |this, event: &MouseUpEvent, window, cx| {
+                                                                this.end_selection_drag(event, window, cx);
+                                                            },
+                                                        ),
+                                                    )
                                                     .child(
                                                         div()
                                                             .size_full()
+                                                            .relative()
                                                             .flex()
                                                             .gap_2()
                                                             .child(
@@ -1092,7 +1254,25 @@ impl VeloIde {
                                                                     .flex_1()
                                                                     .h_full()
                                                                     .overflow_hidden()
-                                                                    .child(highlighted),
+                                                                    .relative()
+                                                                    .children(selection_rects.iter().enumerate().map(|(idx, rect)| {
+                                                                        div()
+                                                                            .id(("selection-rect", idx))
+                                                                            .absolute()
+                                                                            .left(px(rect.x))
+                                                                            .top(px(rect.y))
+                                                                            .w(px(rect.width))
+                                                                            .h(px(rect.height))
+                                                                            .bg(rgb(0x2B3E62))
+                                                                    }))
+                                                                    .child(
+                                                                        div()
+                                                                            .absolute()
+                                                                            .top_0()
+                                                                            .left_0()
+                                                                            .size_full()
+                                                                            .child(highlighted),
+                                                                    ),
                                                             ),
                                                     ),
                                             )
@@ -1183,6 +1363,8 @@ impl Render for VeloIde {
         }
     }
 }
+
+
 
 
 
