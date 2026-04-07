@@ -197,6 +197,7 @@ impl VeloIde {
         self.cursor_byte = 0;
         self.selection.clear();
         self.hover_byte = None;
+        self.editor_scroll = 0.0;
         self.editor_hscroll = 0.0;
         self.is_dirty = false;
         self.screen = Screen::Editor;
@@ -335,20 +336,27 @@ impl VeloIde {
         }
 
         let path = self.files[idx].abs_path.clone();
-        match fs::read_to_string(&path) {
-            Ok(content) => {
+        match fs::read(&path) {
+            Ok(bytes) => {
+                let content = String::from_utf8_lossy(&bytes).into_owned();
+                let had_replacements = bytes.iter().any(|b| *b == 0) || content.contains('\u{FFFD}');
                 self.active_index = Some(idx);
                 self.editor_text = content;
                 self.cursor_byte = 0;
                 self.selection.clear();
                 self.hover_byte = None;
+                self.editor_scroll = 0.0;
                 self.editor_hscroll = 0.0;
                 if let Some(existing_pos) = self.open_tabs.iter().position(|tab| *tab == idx) {
                     self.open_tabs.remove(existing_pos);
                 }
                 self.open_tabs.push(idx);
                 self.is_dirty = false;
-                self.status = format!("Opened {}", self.files[idx].rel_path).into();
+                self.status = if had_replacements {
+                    format!("Opened {} (lossy decode)", self.files[idx].rel_path).into()
+                } else {
+                    format!("Opened {}", self.files[idx].rel_path).into()
+                };
                 window.focus(&self.editor_focus);
             }
             Err(err) => {
