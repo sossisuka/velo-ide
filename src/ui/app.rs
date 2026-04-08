@@ -130,8 +130,8 @@ const EDITOR_GLYPH_WIDTH: f32 = 8.2;
 const EDITOR_LEFT_PADDING: f32 = 0.0;
 const EDITOR_TOP_PADDING: f32 = 0.0;
 const EDITOR_GUTTER_WIDTH: f32 = 0.0;
-const MENU_BAR_HEIGHT: f32 = 28.0;
-const MENU_BUTTON_WIDTH: f32 = 92.0;
+const MENU_BAR_HEIGHT: f32 = 34.0;
+const MENU_BUTTON_WIDTH: f32 = 78.0;
 const MENU_ITEM_HEIGHT: f32 = 28.0;
 const MENU_PANEL_WIDTH: f32 = 300.0;
 const RECENT_PROJECTS_LIMIT: usize = 8;
@@ -867,7 +867,7 @@ impl VeloIde {
         let menu_overlay = if let Some(open_id) = self.open_menu {
             let top_menu = Self::top_menu_by_id(open_id);
             let menu_index = Self::top_menu_index(open_id);
-            let menu_left = 4.0 + (menu_index as f32 * MENU_BUTTON_WIDTH);
+            let menu_left = 12.0 + (menu_index as f32 * MENU_BUTTON_WIDTH);
             let menu_top = MENU_BAR_HEIGHT;
 
             let mut submenu_rows: &'static [MenuItem] = &[];
@@ -1555,23 +1555,25 @@ impl VeloIde {
                     .child(
                         div()
                             .h(px(MENU_BAR_HEIGHT))
-                            .px_1()
+                            .w_full()
+                            .px_3()
                             .flex()
                             .items_center()
                             .gap_0()
-                            .bg(rgb(0x121212))
-                            .text_color(rgb(0x666666))
+                            .bg(rgb(0x181818))
+                            .text_color(rgb(0x727272))
                             .children(TOP_MENUS.iter().enumerate().map(|(menu_idx, menu)| {
                                 let is_open = self.open_menu == Some(menu.id);
                                 div()
                                     .id(("menubar-item", menu_idx))
                                     .w(px(MENU_BUTTON_WIDTH))
-                                    .h(px(MENU_BAR_HEIGHT))
-                                    .px_2()
+                                    .h(px(24.0))
+                                    .px_1()
+                                    .rounded_sm()
                                     .flex()
                                     .items_center()
-                                    .justify_center()
-                                    .bg(if is_open { rgb(0x073A5A) } else { rgb(0x121212) })
+                                    .justify_start()
+                                    .bg(if is_open { rgb(0x202B3A) } else { rgb(0x181818) })
                                     .on_mouse_move(cx.listener({
                                         let id = menu.id;
                                         move |this, _: &MouseMoveEvent, _, cx| {
