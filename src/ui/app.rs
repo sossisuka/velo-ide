@@ -102,6 +102,16 @@ enum Screen {
     Editor,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ActivityPanel {
+    Explorer,
+    Search,
+    SourceControl,
+    Run,
+    Extensions,
+    Settings,
+}
+
 const EDITOR_LINE_HEIGHT: f32 = 18.0;
 const EDITOR_GLYPH_WIDTH: f32 = 8.2;
 const EDITOR_LEFT_PADDING: f32 = 0.0;
@@ -127,6 +137,7 @@ pub struct VeloIde {
     editor_hscroll: f32,
     tab_scroll: usize,
     last_viewport_width: f32,
+    active_panel: ActivityPanel,
 
     core: EditorCore,
     hover_byte: Option<usize>,
@@ -164,6 +175,7 @@ impl VeloIde {
             editor_hscroll: 0.0,
             tab_scroll: 0,
             last_viewport_width: 1360.0,
+            active_panel: ActivityPanel::Explorer,
             core: EditorCore::new(),
             hover_byte: None,
             open_menu: None,
@@ -309,6 +321,11 @@ impl VeloIde {
     fn reset_sidebar_width(&mut self, cx: &mut Context<Self>) {
         self.sidebar_width = 300.0;
         self.clamp_sidebar_width();
+        cx.notify();
+    }
+
+    fn set_active_panel(&mut self, panel: ActivityPanel, cx: &mut Context<Self>) {
+        self.active_panel = panel;
         cx.notify();
     }
 
@@ -695,192 +712,185 @@ impl VeloIde {
             vec![format!("{}", root.display())]
         } else {
             vec![
-                "D:/Projects/VeloCode/velo".to_string(),
-                "D:/Projects/iNetVPN/frontend".to_string(),
-                "D:/Projects/git tmp/vscode".to_string(),
+                "iNetVPN".to_string(),
+                "Suna_Suna_no_Mi_Datapack_1.21.4".to_string(),
+                "datapacks".to_string(),
+                "AD".to_string(),
+                "Untitled".to_string(),
             ]
         };
 
         div()
             .size_full()
-            .bg(rgb(0x121212))
-            .text_color(rgb(0xCCCCCC))
-            .flex_col()
+            .bg(rgb(0x282e3b))
+            .text_color(rgb(0xd9dee7))
+            .flex()
+            .items_center()
+            .justify_center()
             .child(
                 div()
-                    .h(px(34.0))
-                    .w_full()
-                    .bg(rgb(0x181818))
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .px_3()
+                    .w(px(760.0))
+                    .max_w_full()
+                    .px_4()
+                    .py_4()
+                    .flex_col()
+                    .gap_3()
                     .child(
                         div()
                             .flex()
                             .items_center()
-                            .gap_4()
-                            .child("File")
-                            .child("Edit")
-                            .child("Selection")
-                            .child("View")
-                            .child("Go")
-                            .child("Run")
-                            .child("Terminal")
-                            .child("Help"),
-                    )
-                    .child(
-                        div()
-                            .text_color(rgb(0x727272))
-                            .child("VeloCode"),
-                    ),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .w_full()
-                    .flex()
-                    .child(
-                        div()
-                            .w(px(260.0))
-                            .h_full()
-                            .bg(rgb(0x181818))
-                            .p_3()
-                            .flex_col()
-                            .gap_2()
-                            .child(div().text_color(rgb(0x727272)).child("WELCOME"))
+                            .gap_3()
                             .child(
                                 div()
-                                    .px_3()
-                                    .py_2()
-                                    .rounded_sm()
-                                    .bg(rgb(0x202020))
-                                    .child("Start"),
+                                    .w(px(54.0))
+                                    .h(px(54.0))
+                                    .rounded_md()
+                                    .border_1()
+                                    .border_color(rgb(0xb8c0ce))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .text_color(rgb(0xb8c0ce))
+                                    .child("V"),
                             )
                             .child(
                                 div()
-                                    .px_3()
-                                    .py_2()
-                                    .rounded_sm()
-                                    .bg(rgb(0x121212))
-                                    .child("Recent Projects"),
-                            )
-                            .child(
-                                div()
-                                    .px_3()
-                                    .py_2()
-                                    .rounded_sm()
-                                    .bg(rgb(0x121212))
-                                    .child("Documentation"),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .h_full()
-                            .p_8()
-                            .flex_col()
-                            .gap_4()
-                            .child("Welcome to Velo")
-                            .child(div().text_color(rgb(0x727272)).child("Zed-style Start"))
-                            .child(
-                                div()
-                                    .w(px(680.0))
-                                    .max_w_full()
-                                    .flex_col()
-                                    .gap_2()
-                                    .child(
-                                        div()
-                                            .w_full()
-                                            .flex()
-                                            .items_center()
-                                            .justify_between()
-                                            .px_3()
-                                            .py_2()
-                                            .rounded_md()
-                                            .bg(rgb(0x202020))
-                                            .id("welcome-open-folder")
-                                            .on_click(cx.listener(
-                                                |this, _: &ClickEvent, window, cx| {
-                                                    this.open_project_dialog(window, cx);
-                                                },
-                                            ))
-                                            .child(
-                                                div()
-                                                    .flex()
-                                                    .items_center()
-                                                    .gap_2()
-                                                    .child(img(self.icons.folder_open()).size(px(16.0)))
-                                                    .child("Open Folder"),
-                                            )
-                                            .child(div().text_color(rgb(0x727272)).child("Ctrl+O")),
-                                    )
-                                    .child(
-                                        div()
-                                            .w_full()
-                                            .flex()
-                                            .items_center()
-                                            .justify_between()
-                                            .px_3()
-                                            .py_2()
-                                            .rounded_md()
-                                            .bg(rgb(0x202020))
-                                            .id("welcome-new-buffer")
-                                            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                                                this.core.clear();
-                                                this.screen = Screen::Editor;
-                                                this.status = "New buffer".into();
-                                                cx.notify();
-                                            }))
-                                            .child(
-                                                div()
-                                                    .flex()
-                                                    .items_center()
-                                                    .gap_2()
-                                                    .child(img(self.icons.add()).size(px(14.0)))
-                                                    .child("New File"),
-                                            )
-                                            .child(div().text_color(rgb(0x727272)).child("Ctrl+N")),
-                                    ),
-                            )
-                            .child(div().text_color(rgb(0x727272)).child("RECENT"))
-                            .child(
-                                div()
-                                    .w(px(680.0))
-                                    .max_w_full()
                                     .flex_col()
                                     .gap_1()
-                                    .children(recent_items.iter().enumerate().map(
-                                        |(idx, item)| {
-                                            div()
-                                                .w_full()
-                                                .flex()
-                                                .items_center()
-                                                .justify_between()
-                                                .px_3()
-                                                .py_2()
-                                                .rounded_sm()
-                                                .bg(rgb(0x181818))
-                                                .id(("welcome-recent", idx))
-                                                .child(div().truncate().child(item.clone()))
-                                                .child(div().text_color(rgb(0x727272)).child("Open"))
-                                        },
-                                    )),
+                                    .child("Welcome back to Velo")
+                                    .child(
+                                        div()
+                                            .text_color(rgb(0xb8c0ce))
+                                            .italic()
+                                            .child("The editor for what's next"),
+                                    ),
                             ),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(div().text_color(rgb(0x9ea7b8)).child("GET STARTED"))
+                            .child(div().flex_1().h(px(1.0)).bg(rgb(0x404a5d))),
+                    )
+                    .child(
+                        div()
+                            .flex_col()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .w_full()
+                                    .h(px(36.0))
+                                    .px_1()
+                                    .flex()
+                                    .items_center()
+                                    .justify_between()
+                                    .id("welcome-new-buffer")
+                                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                                        this.core.clear();
+                                        this.screen = Screen::Editor;
+                                        this.status = "New buffer".into();
+                                        cx.notify();
+                                    }))
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .items_center()
+                                            .gap_2()
+                                            .child(img(self.icons.add()).size(px(14.0)))
+                                            .child("New File"),
+                                    )
+                                    .child(div().text_color(rgb(0xa7b0c0)).child("Ctrl-N")),
+                            )
+                            .child(
+                                div()
+                                    .w_full()
+                                    .h(px(36.0))
+                                    .px_1()
+                                    .flex()
+                                    .items_center()
+                                    .justify_between()
+                                    .id("welcome-open-folder")
+                                    .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                                        this.open_project_dialog(window, cx);
+                                    }))
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .items_center()
+                                            .gap_2()
+                                            .child(img(self.icons.folder_open()).size(px(14.0)))
+                                            .child("Open Project"),
+                                    )
+                                    .child(div().text_color(rgb(0xa7b0c0)).child("Ctrl-K  Ctrl-O")),
+                            )
+                            .child(
+                                div()
+                                    .w_full()
+                                    .h(px(36.0))
+                                    .px_1()
+                                    .flex()
+                                    .items_center()
+                                    .justify_between()
+                                    .id("welcome-clone")
+                                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                                        this.status = "Clone Repository is not implemented yet".into();
+                                        cx.notify();
+                                    }))
+                                    .child(div().flex().items_center().gap_2().child("↪").child("Clone Repository"))
+                                    .child(div().text_color(rgb(0xa7b0c0)).child("")),
+                            )
+                            .child(
+                                div()
+                                    .w_full()
+                                    .h(px(36.0))
+                                    .px_1()
+                                    .flex()
+                                    .items_center()
+                                    .justify_between()
+                                    .id("welcome-command-palette")
+                                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                                        this.status = "Command Palette is not implemented yet".into();
+                                        cx.notify();
+                                    }))
+                                    .child(div().flex().items_center().gap_2().child("⌘").child("Open Command Palette"))
+                                    .child(div().text_color(rgb(0xa7b0c0)).child("Ctrl-Shift-P")),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .mt_2()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(div().text_color(rgb(0x9ea7b8)).child("RECENT PROJECTS"))
+                            .child(div().flex_1().h(px(1.0)).bg(rgb(0x404a5d))),
+                    )
+                    .child(
+                        div()
+                            .flex_col()
+                            .gap_1()
+                            .children(recent_items.iter().enumerate().map(|(idx, item)| {
+                                div()
+                                    .w_full()
+                                    .h(px(36.0))
+                                    .px_1()
+                                    .flex()
+                                    .items_center()
+                                    .justify_between()
+                                    .id(("welcome-recent", idx))
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .items_center()
+                                            .gap_2()
+                                            .child(img(self.icons.folder()).size(px(14.0)))
+                                            .child(item.clone()),
+                                    )
+                                    .child(div().text_color(rgb(0xa7b0c0)).child(format!("Ctrl-{}", idx + 1)))
+                            })),
                     ),
-            )
-            .child(
-                div()
-                    .h(px(22.0))
-                    .w_full()
-                    .px_3()
-                    .bg(rgb(0x121212))
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .text_color(rgb(0x727272))
-                    .child("velo")
-                    .child("Welcome"),
             )
             .into_any_element()
     }
@@ -1032,6 +1042,14 @@ impl VeloIde {
             editor_view.htrack_w,
         );
         let visible_entries = &entries[explorer_view.start..explorer_view.end];
+        let panel_title = match self.active_panel {
+            ActivityPanel::Explorer => "Explorer",
+            ActivityPanel::Search => "Search",
+            ActivityPanel::SourceControl => "Source Control",
+            ActivityPanel::Run => "Run and Debug",
+            ActivityPanel::Extensions => "Extensions",
+            ActivityPanel::Settings => "Settings",
+        };
         let editor_area_width = (viewport_w - self.sidebar_width - 110.0).max(240.0);
         let tab_visible_count = ((editor_area_width - 72.0) / 154.0).floor() as usize;
         let tab_visible_count = tab_visible_count.clamp(1, 12);
@@ -1050,6 +1068,125 @@ impl VeloIde {
             explorer_view.start,
             explorer_view.track_h,
         );
+        let sidebar_body = if self.active_panel == ActivityPanel::Explorer {
+            div()
+                .flex()
+                .gap_2()
+                .on_scroll_wheel(cx.listener(|this, event: &ScrollWheelEvent, _, cx| {
+                    this.scroll_explorer(event, cx);
+                }))
+                .child(
+                    div().flex_1().flex_col().gap_1().children(
+                        visible_entries.iter().enumerate().map(|(visible_idx, row)| {
+                            let row_id = explorer_view.start + visible_idx;
+                            match &row.kind {
+                                VisibleKind::Folder {
+                                    abs_path,
+                                    name,
+                                    expanded,
+                                } => {
+                                    let folder = abs_path.clone();
+                                    let icon = if *expanded {
+                                        self.icons.folder_open()
+                                    } else {
+                                        self.icons.folder()
+                                    };
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .overflow_hidden()
+                                        .gap_2()
+                                        .px_2()
+                                        .py(px(2.0))
+                                        .rounded_sm()
+                                        .bg(rgb(0x121212))
+                                        .id(("explorer-folder", row_id))
+                                        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                            this.workspace.toggle_folder(&folder);
+                                            cx.notify();
+                                        }))
+                                        .child(div().w(px((row.depth as f32) * 14.0)))
+                                        .child(img(icon).size(px(20.0)))
+                                        .child(div().flex_1().truncate().child(name.clone()))
+                                }
+                                VisibleKind::File { file_idx } => {
+                                    let idx = *file_idx;
+                                    let file = &self.workspace.files[idx];
+                                    let selected = self.workspace.active_index == Some(idx);
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .overflow_hidden()
+                                        .gap_2()
+                                        .px_2()
+                                        .py(px(2.0))
+                                        .rounded_sm()
+                                        .bg(if selected { rgb(0x073A5A) } else { rgb(0x121212) })
+                                        .id(("explorer-file", row_id))
+                                        .on_click(cx.listener(
+                                            move |this, _: &ClickEvent, window, cx| {
+                                                this.open_file_at(idx, window, cx);
+                                            },
+                                        ))
+                                        .child(div().w(px((row.depth as f32) * 14.0)))
+                                        .child(img(this_icon(&self.icons, file)).size(px(20.0)))
+                                        .child(div().flex_1().truncate().child(file.name.clone()))
+                                }
+                            }
+                        }),
+                    ),
+                )
+                .child(
+                    div()
+                        .w(px(8.0))
+                        .h(px(explorer_view.track_h))
+                        .rounded_md()
+                        .bg(rgb(0x1B1D1E))
+                        .child(
+                            div()
+                                .w(px(8.0))
+                                .h(px(thumb_h))
+                                .mt(px(thumb_top))
+                                .rounded_md()
+                                .bg(if explorer_scrollable {
+                                    rgb(0x6F6F6F)
+                                } else {
+                                    rgb(0x1B1D1E)
+                                }),
+                        ),
+                )
+                .into_any_element()
+        } else {
+            div()
+                .flex_1()
+                .rounded_sm()
+                .bg(rgb(0x121212))
+                .p_3()
+                .flex_col()
+                .gap_2()
+                .child(div().text_color(rgb(0xCCCCCC)).child(panel_title))
+                .child(
+                    div().text_color(rgb(0x6F6F6F)).child(match self.active_panel {
+                        ActivityPanel::Search => {
+                            "Search view placeholder: file search will appear here."
+                        }
+                        ActivityPanel::SourceControl => {
+                            "Source Control view placeholder: changes and commits."
+                        }
+                        ActivityPanel::Run => {
+                            "Run and Debug view placeholder: launch configs and sessions."
+                        }
+                        ActivityPanel::Extensions => {
+                            "Extensions view placeholder: installed/marketplace extensions."
+                        }
+                        ActivityPanel::Settings => {
+                            "Settings view placeholder: preferences and keybindings."
+                        }
+                        ActivityPanel::Explorer => "",
+                    }),
+                )
+                .into_any_element()
+        };
         let menu_overlay = if let Some(open_id) = self.open_menu {
             let top_menu = Self::top_menu_by_id(open_id);
             let menu_index = Self::top_menu_index(open_id);
@@ -1246,30 +1383,54 @@ impl VeloIde {
                                         div()
                                             .w_full()
                                             .h(px(56.0))
-                                            .bg(rgb(0x073A5A))
+                                            .bg(if self.active_panel == ActivityPanel::Explorer {
+                                                rgb(0x073A5A)
+                                            } else {
+                                                rgb(0x181818)
+                                            })
                                             .flex()
                                             .items_center()
                                             .justify_center()
+                                            .id("activity-explorer")
+                                            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                                                this.set_active_panel(ActivityPanel::Explorer, cx);
+                                            }))
                                             .child(img(self.icons.activity_explorer()).size(px(28.0))),
                                     )
                                     .child(
                                         div()
                                             .w_full()
                                             .h(px(56.0))
-                                            .bg(rgb(0x181818))
+                                            .bg(if self.active_panel == ActivityPanel::Search {
+                                                rgb(0x073A5A)
+                                            } else {
+                                                rgb(0x181818)
+                                            })
                                             .flex()
                                             .items_center()
                                             .justify_center()
+                                            .id("activity-search")
+                                            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                                                this.set_active_panel(ActivityPanel::Search, cx);
+                                            }))
                                             .child(img(self.icons.activity_search()).size(px(28.0))),
                                     )
                                     .child(
                                         div()
                                             .w_full()
                                             .h(px(56.0))
-                                            .bg(rgb(0x181818))
+                                            .bg(if self.active_panel == ActivityPanel::SourceControl {
+                                                rgb(0x073A5A)
+                                            } else {
+                                                rgb(0x181818)
+                                            })
                                             .flex()
                                             .items_center()
                                             .justify_center()
+                                            .id("activity-source-control")
+                                            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                                                this.set_active_panel(ActivityPanel::SourceControl, cx);
+                                            }))
                                             .child(
                                                 img(self.icons.activity_source_control()).size(px(28.0)),
                                             ),
@@ -1278,20 +1439,36 @@ impl VeloIde {
                                         div()
                                             .w_full()
                                             .h(px(56.0))
-                                            .bg(rgb(0x181818))
+                                            .bg(if self.active_panel == ActivityPanel::Run {
+                                                rgb(0x073A5A)
+                                            } else {
+                                                rgb(0x181818)
+                                            })
                                             .flex()
                                             .items_center()
                                             .justify_center()
+                                            .id("activity-run")
+                                            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                                                this.set_active_panel(ActivityPanel::Run, cx);
+                                            }))
                                             .child(img(self.icons.activity_run()).size(px(28.0))),
                                     )
                                     .child(
                                         div()
                                             .w_full()
                                             .h(px(56.0))
-                                            .bg(rgb(0x181818))
+                                            .bg(if self.active_panel == ActivityPanel::Extensions {
+                                                rgb(0x073A5A)
+                                            } else {
+                                                rgb(0x181818)
+                                            })
                                             .flex()
                                             .items_center()
                                             .justify_center()
+                                            .id("activity-extensions")
+                                            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                                                this.set_active_panel(ActivityPanel::Extensions, cx);
+                                            }))
                                             .child(img(self.icons.activity_extensions()).size(px(28.0))),
                                     ),
                             )
@@ -1304,10 +1481,18 @@ impl VeloIde {
                                         div()
                                             .w_full()
                                             .h(px(56.0))
-                                            .bg(rgb(0x181818))
+                                            .bg(if self.active_panel == ActivityPanel::Settings {
+                                                rgb(0x073A5A)
+                                            } else {
+                                                rgb(0x181818)
+                                            })
                                             .flex()
                                             .items_center()
                                             .justify_center()
+                                            .id("activity-settings")
+                                            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                                                this.set_active_panel(ActivityPanel::Settings, cx);
+                                            }))
                                             .child(img(self.icons.settings()).size(px(28.0))),
                                     ),
                             ),
@@ -1336,90 +1521,9 @@ impl VeloIde {
                                     .rounded_sm()
                                     .bg(rgb(0x121212))
                                     .text_color(rgb(0x3794FF))
-                                    .child("Explorer"),
+                                    .child(panel_title),
                             )
-                            .child(
-                                div()
-                                    .flex()
-                                    .gap_2()
-                                    .on_scroll_wheel(cx.listener(|this, event: &ScrollWheelEvent, _, cx| {
-                                        this.scroll_explorer(event, cx);
-                                    }))
-                                    .child(
-                                        div().flex_1().flex_col().gap_1().children(
-                                    visible_entries.iter().enumerate().map(|(visible_idx, row)| {
-                                        let row_id = explorer_view.start + visible_idx;
-                                        match &row.kind {
-                                            VisibleKind::Folder { abs_path, name, expanded } => {
-                                                let folder = abs_path.clone();
-                                                let icon = if *expanded {
-                                                    self.icons.folder_open()
-                                                } else {
-                                                    self.icons.folder()
-                                                };
-                                                div()
-                                                    .flex()
-                                                    .items_center()
-                                                    .overflow_hidden()
-                                                    .gap_2()
-                                                    .px_2()
-                                                    .py(px(2.0))
-                                                    .rounded_sm()
-                                                    .bg(rgb(0x121212))
-                                                    .id(("explorer-folder", row_id))
-                                                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                                                        this.workspace.toggle_folder(&folder);
-                                                        cx.notify();
-                                                    }))
-                                                    .child(div().w(px((row.depth as f32) * 14.0)))
-                                                    .child(img(icon).size(px(20.0)))
-                                                    .child(div().flex_1().truncate().child(name.clone()))
-                                            }
-                                            VisibleKind::File { file_idx } => {
-                                                let idx = *file_idx;
-                                                let file = &self.workspace.files[idx];
-                                                let selected = self.workspace.active_index == Some(idx);
-                                                div()
-                                                    .flex()
-                                                    .items_center()
-                                                    .overflow_hidden()
-                                                    .gap_2()
-                                                    .px_2()
-                                                    .py(px(2.0))
-                                                    .rounded_sm()
-                                                    .bg(if selected { rgb(0x073A5A) } else { rgb(0x121212) })
-                                                    .id(("explorer-file", row_id))
-                                                    .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                                                        this.open_file_at(idx, window, cx);
-                                                    }))
-                                                    .child(div().w(px((row.depth as f32) * 14.0)))
-                                                    .child(img(this_icon(&self.icons, file)).size(px(20.0)))
-                                                    .child(div().flex_1().truncate().child(file.name.clone()))
-                                            }
-                                        }
-                                    }),
-                                ),
-                                    )
-                                    .child(
-                                        div()
-                                            .w(px(8.0))
-                                            .h(px(explorer_view.track_h))
-                                            .rounded_md()
-                                            .bg(rgb(0x1B1D1E))
-                                            .child(
-                                                div()
-                                                    .w(px(8.0))
-                                                    .h(px(thumb_h))
-                                                    .mt(px(thumb_top))
-                                                    .rounded_md()
-                                                    .bg(if explorer_scrollable {
-                                                        rgb(0x6F6F6F)
-                                                    } else {
-                                                        rgb(0x1B1D1E)
-                                                    }),
-                                            ),
-                                    ),
-                            ),
+                            .child(sidebar_body),
                     )
                     .child(
                         div()
