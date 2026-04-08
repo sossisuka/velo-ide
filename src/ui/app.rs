@@ -1033,48 +1033,42 @@ impl VeloIde {
                             .justify_center()
                             .child(
                                 div()
-                                    .h_full()
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
+                                    .w(px(760.0))
+                                    .max_w_full()
+                                    .px_4()
+                                    .py_4()
+                                    .flex_col()
+                                    .gap_3()
                                     .child(
                                         div()
-                                            .w(px(760.0))
-                                            .max_w_full()
-                                            .px_4()
-                                            .py_4()
-                                            .flex_col()
+                                            .flex()
+                                            .items_center()
                                             .gap_3()
                                             .child(
                                                 div()
+                                                    .w(px(54.0))
+                                                    .h(px(54.0))
+                                                    .rounded_md()
+                                                    .bg(rgb(0x1A1F2A))
                                                     .flex()
                                                     .items_center()
-                                                    .gap_3()
-                                                    .child(
-                                                        div()
-                                                            .w(px(54.0))
-                                                            .h(px(54.0))
-                                                            .rounded_md()
-                                                            .bg(rgb(0x1A1F2A))
-                                                            .flex()
-                                                            .items_center()
-                                                            .justify_center()
-                                                            .text_color(rgb(0xB8C0CE))
-                                                            .child("V"),
-                                                    )
-                                                    .child(
-                                                        div()
-                                                            .flex_col()
-                                                            .gap_1()
-                                                            .child("Welcome back to Velo")
-                                                            .child(
-                                                                div()
-                                                                    .text_color(rgb(0x9EA7B8))
-                                                                    .italic()
-                                                                    .child("The editor for what's next"),
-                                                            ),
-                                                    ),
+                                                    .justify_center()
+                                                    .text_color(rgb(0xB8C0CE))
+                                                    .child("V"),
                                             )
+                                            .child(
+                                                div()
+                                                    .flex_col()
+                                                    .gap_1()
+                                                    .child("Welcome back to Velo")
+                                                    .child(
+                                                        div()
+                                                            .text_color(rgb(0x9EA7B8))
+                                                            .italic()
+                                                            .child("The editor for what's next"),
+                                                    ),
+                                            ),
+                                    )
                                             .child(
                                                 div()
                                                     .flex()
@@ -1240,7 +1234,6 @@ impl VeloIde {
                                                         div().into_any_element()
                                                     }),
                                             ),
-                                    ),
                             ),
                     ),
             )
