@@ -1033,206 +1033,213 @@ impl VeloIde {
                             .justify_center()
                             .child(
                                 div()
-                                    .w(px(760.0))
-                                    .max_w_full()
-                                    .px_4()
-                                    .py_4()
-                                    .flex_col()
-                                    .gap_3()
+                                    .h_full()
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
                                     .child(
                                         div()
-                                            .flex()
-                                            .items_center()
+                                            .w(px(760.0))
+                                            .max_w_full()
+                                            .px_4()
+                                            .py_4()
+                                            .flex_col()
                                             .gap_3()
                                             .child(
                                                 div()
-                                                    .w(px(54.0))
-                                                    .h(px(54.0))
-                                                    .rounded_md()
-                                                    .bg(rgb(0x1A1F2A))
                                                     .flex()
                                                     .items_center()
-                                                    .justify_center()
-                                                    .text_color(rgb(0xB8C0CE))
-                                                    .child("V"),
+                                                    .gap_3()
+                                                    .child(
+                                                        div()
+                                                            .w(px(54.0))
+                                                            .h(px(54.0))
+                                                            .rounded_md()
+                                                            .bg(rgb(0x1A1F2A))
+                                                            .flex()
+                                                            .items_center()
+                                                            .justify_center()
+                                                            .text_color(rgb(0xB8C0CE))
+                                                            .child("V"),
+                                                    )
+                                                    .child(
+                                                        div()
+                                                            .flex_col()
+                                                            .gap_1()
+                                                            .child("Welcome back to Velo")
+                                                            .child(
+                                                                div()
+                                                                    .text_color(rgb(0x9EA7B8))
+                                                                    .italic()
+                                                                    .child("The editor for what's next"),
+                                                            ),
+                                                    ),
+                                            )
+                                            .child(
+                                                div()
+                                                    .flex()
+                                                    .items_center()
+                                                    .gap_2()
+                                                    .child(div().text_color(rgb(0x9EA7B8)).child("GET STARTED"))
+                                                    .child(div().flex_1().h(px(1.0)).bg(rgb(0x2A2A2A))),
                                             )
                                             .child(
                                                 div()
                                                     .flex_col()
                                                     .gap_1()
-                                                    .child("Welcome back to Velo")
                                                     .child(
                                                         div()
-                                                            .text_color(rgb(0x9EA7B8))
-                                                            .italic()
-                                                            .child("The editor for what's next"),
-                                                    ),
-                                            ),
-                                    )
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .items_center()
-                                            .gap_2()
-                                            .child(div().text_color(rgb(0x9EA7B8)).child("GET STARTED"))
-                                            .child(div().flex_1().h(px(1.0)).bg(rgb(0x2A2A2A))),
-                                    )
-                                    .child(
-                                        div()
-                                            .flex_col()
-                                            .gap_1()
-                                            .child(
-                                                div()
-                                                    .w_full()
-                                                    .h(px(36.0))
-                                                    .px_1()
-                                                    .flex()
-                                                    .items_center()
-                                                    .justify_between()
-                                                    .id("welcome-new-buffer")
-                                                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                                                        this.core.clear();
-                                                        this.screen = Screen::Editor;
-                                                        this.status = "New buffer".into();
-                                                        cx.notify();
-                                                    }))
-                                                    .child(
-                                                        div()
+                                                            .w_full()
+                                                            .h(px(36.0))
+                                                            .px_1()
                                                             .flex()
                                                             .items_center()
-                                                            .gap_2()
-                                                            .child(img(self.icons.add()).size(px(14.0)))
-                                                            .child("New File"),
-                                                    )
-                                                    .child(div().text_color(rgb(0xA7B0C0)).child("Ctrl-N")),
-                                            )
-                                            .child(
-                                                div()
-                                                    .w_full()
-                                                    .h(px(36.0))
-                                                    .px_1()
-                                                    .flex()
-                                                    .items_center()
-                                                    .justify_between()
-                                                    .id("welcome-open-folder")
-                                                    .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
-                                                        this.open_project_dialog(window, cx);
-                                                    }))
-                                                    .child(
-                                                        div()
-                                                            .flex()
-                                                            .items_center()
-                                                            .gap_2()
-                                                            .child(img(self.icons.folder_open()).size(px(14.0)))
-                                                            .child("Open Project"),
-                                                    )
-                                                    .child(div().text_color(rgb(0xA7B0C0)).child("Ctrl-K  Ctrl-O")),
-                                            )
-                                            .child(
-                                                div()
-                                                    .w_full()
-                                                    .h(px(36.0))
-                                                    .px_1()
-                                                    .flex()
-                                                    .items_center()
-                                                    .justify_between()
-                                                    .id("welcome-clone")
-                                                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                                                        this.status = "Clone Repository is not implemented yet".into();
-                                                        cx.notify();
-                                                    }))
-                                                    .child(
-                                                        div()
-                                                            .flex()
-                                                            .items_center()
-                                                            .gap_2()
-                                                            .child(">")
-                                                            .child("Clone Repository"),
-                                                    )
-                                                    .child(div().text_color(rgb(0xA7B0C0)).child("")),
-                                            )
-                                            .child(
-                                                div()
-                                                    .w_full()
-                                                    .h(px(36.0))
-                                                    .px_1()
-                                                    .flex()
-                                                    .items_center()
-                                                    .justify_between()
-                                                    .id("welcome-command-palette")
-                                                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                                                        this.status = "Command Palette is not implemented yet".into();
-                                                        cx.notify();
-                                                    }))
-                                                    .child(
-                                                        div()
-                                                            .flex()
-                                                            .items_center()
-                                                            .gap_2()
-                                                            .child(">")
-                                                            .child("Open Command Palette"),
-                                                    )
-                                                    .child(div().text_color(rgb(0xA7B0C0)).child("Ctrl-Shift-P")),
-                                            ),
-                                    )
-                                    .child(
-                                        div()
-                                            .mt_2()
-                                            .flex()
-                                            .items_center()
-                                            .gap_2()
-                                            .child(div().text_color(rgb(0x9EA7B8)).child("RECENT PROJECTS"))
-                                            .child(div().flex_1().h(px(1.0)).bg(rgb(0x2A2A2A))),
-                                    )
-                                    .child(
-                                        div()
-                                            .flex_col()
-                                            .gap_1()
-                            .children(recent_items.iter().enumerate().map(|(idx, (item, path))| {
-                                let recent_path = path.clone();
-                                let item_font = Self::localized_ui_font(item);
-                                div()
-                                                    .w_full()
-                                                    .h(px(36.0))
-                                                    .px_1()
-                                                    .flex()
-                                                    .items_center()
-                                                    .justify_between()
-                                                    .id(("welcome-recent", idx))
-                                                    .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                                                        if recent_path.is_dir() {
-                                                            this.load_project(recent_path.clone(), window, cx);
-                                                        } else {
-                                                            this.status = format!(
-                                                                "Recent project not found: {}",
-                                                                recent_path.display()
+                                                            .justify_between()
+                                                            .id("welcome-new-buffer")
+                                                            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                                                                this.core.clear();
+                                                                this.screen = Screen::Editor;
+                                                                this.status = "New buffer".into();
+                                                                cx.notify();
+                                                            }))
+                                                            .child(
+                                                                div()
+                                                                    .flex()
+                                                                    .items_center()
+                                                                    .gap_2()
+                                                                    .child(img(self.icons.add()).size(px(14.0)))
+                                                                    .child("New File"),
                                                             )
-                                                            .into();
-                                                            this.recent_projects.retain(|p| p != &recent_path);
-                                                            this.persist_recent_projects();
-                                                            cx.notify();
-                                                        }
-                                                    }))
+                                                            .child(div().text_color(rgb(0xA7B0C0)).child("Ctrl-N")),
+                                                    )
                                                     .child(
                                                         div()
+                                                            .w_full()
+                                                            .h(px(36.0))
+                                                            .px_1()
                                                             .flex()
                                                             .items_center()
-                                                            .gap_2()
-                                            .child(img(self.icons.folder()).size(px(14.0)))
-                                            .child(div().font(item_font).child(item.clone())),
-                                    )
-                                                    .child(div().text_color(rgb(0xA7B0C0)).child(format!("Ctrl-{}", idx + 1)))
-                                            }))
-                                            .child(if recent_items.is_empty() {
+                                                            .justify_between()
+                                                            .id("welcome-open-folder")
+                                                            .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                                                                this.open_project_dialog(window, cx);
+                                                            }))
+                                                            .child(
+                                                                div()
+                                                                    .flex()
+                                                                    .items_center()
+                                                                    .gap_2()
+                                                                    .child(img(self.icons.folder_open()).size(px(14.0)))
+                                                                    .child("Open Project"),
+                                                            )
+                                                            .child(div().text_color(rgb(0xA7B0C0)).child("Ctrl-K  Ctrl-O")),
+                                                    )
+                                                    .child(
+                                                        div()
+                                                            .w_full()
+                                                            .h(px(36.0))
+                                                            .px_1()
+                                                            .flex()
+                                                            .items_center()
+                                                            .justify_between()
+                                                            .id("welcome-clone")
+                                                            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                                                                this.status = "Clone Repository is not implemented yet".into();
+                                                                cx.notify();
+                                                            }))
+                                                            .child(
+                                                                div()
+                                                                    .flex()
+                                                                    .items_center()
+                                                                    .gap_2()
+                                                                    .child(">")
+                                                                    .child("Clone Repository"),
+                                                            )
+                                                            .child(div().text_color(rgb(0xA7B0C0)).child("")),
+                                                    )
+                                                    .child(
+                                                        div()
+                                                            .w_full()
+                                                            .h(px(36.0))
+                                                            .px_1()
+                                                            .flex()
+                                                            .items_center()
+                                                            .justify_between()
+                                                            .id("welcome-command-palette")
+                                                            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                                                                this.status = "Command Palette is not implemented yet".into();
+                                                                cx.notify();
+                                                            }))
+                                                            .child(
+                                                                div()
+                                                                    .flex()
+                                                                    .items_center()
+                                                                    .gap_2()
+                                                                    .child(">")
+                                                                    .child("Open Command Palette"),
+                                                            )
+                                                            .child(div().text_color(rgb(0xA7B0C0)).child("Ctrl-Shift-P")),
+                                                    ),
+                                            )
+                                            .child(
                                                 div()
-                                                    .h(px(30.0))
-                                                    .px_1()
-                                                    .text_color(rgb(0x6F6F6F))
-                                                    .child("No recent projects yet")
-                                                    .into_any_element()
-                                            } else {
-                                                div().into_any_element()
-                                            }),
+                                                    .mt_2()
+                                                    .flex()
+                                                    .items_center()
+                                                    .gap_2()
+                                                    .child(div().text_color(rgb(0x9EA7B8)).child("RECENT PROJECTS"))
+                                                    .child(div().flex_1().h(px(1.0)).bg(rgb(0x2A2A2A))),
+                                            )
+                                            .child(
+                                                div()
+                                                    .flex_col()
+                                                    .gap_1()
+                                                    .children(recent_items.iter().enumerate().map(|(idx, (item, path))| {
+                                                        let recent_path = path.clone();
+                                                        let item_font = Self::localized_ui_font(item);
+                                                        div()
+                                                            .w_full()
+                                                            .h(px(36.0))
+                                                            .px_1()
+                                                            .flex()
+                                                            .items_center()
+                                                            .justify_between()
+                                                            .id(("welcome-recent", idx))
+                                                            .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                                                                if recent_path.is_dir() {
+                                                                    this.load_project(recent_path.clone(), window, cx);
+                                                                } else {
+                                                                    this.status = format!(
+                                                                        "Recent project not found: {}",
+                                                                        recent_path.display()
+                                                                    )
+                                                                    .into();
+                                                                    this.recent_projects.retain(|p| p != &recent_path);
+                                                                    this.persist_recent_projects();
+                                                                    cx.notify();
+                                                                }
+                                                            }))
+                                                            .child(
+                                                                div()
+                                                                    .flex()
+                                                                    .items_center()
+                                                                    .gap_2()
+                                                                    .child(img(self.icons.folder()).size(px(14.0)))
+                                                                    .child(div().font(item_font).child(item.clone())),
+                                                            )
+                                                            .child(div().text_color(rgb(0xA7B0C0)).child(format!("Ctrl-{}", idx + 1)))
+                                                    }))
+                                                    .child(if recent_items.is_empty() {
+                                                        div()
+                                                            .h(px(30.0))
+                                                            .px_1()
+                                                            .text_color(rgb(0x6F6F6F))
+                                                            .child("No recent projects yet")
+                                                            .into_any_element()
+                                                    } else {
+                                                        div().into_any_element()
+                                                    }),
+                                            ),
                                     ),
                             ),
                     ),
