@@ -121,6 +121,7 @@ const MENU_BAR_HEIGHT: f32 = 28.0;
 const MENU_BUTTON_WIDTH: f32 = 92.0;
 const MENU_ITEM_HEIGHT: f32 = 28.0;
 const MENU_PANEL_WIDTH: f32 = 300.0;
+const RECENT_PROJECTS_LIMIT: usize = 8;
 
 pub struct VeloIde {
     icons: Icons,
@@ -144,6 +145,7 @@ pub struct VeloIde {
     open_menu: Option<TopMenuId>,
     open_submenu: Option<&'static str>,
     status: SharedString,
+    recent_projects: Vec<PathBuf>,
 }
 
 impl VeloIde {
@@ -161,6 +163,7 @@ impl VeloIde {
     }
 
     pub fn new(icons: Icons, cx: &mut Context<Self>) -> Self {
+        let recent_projects = Self::load_recent_projects();
         Self {
             icons,
             screen: Screen::Welcome,
@@ -181,7 +184,74 @@ impl VeloIde {
             open_menu: None,
             open_submenu: None,
             status: "Ready".into(),
+            recent_projects,
         }
+    }
+
+    fn recent_projects_file() -> PathBuf {
+        if let Ok(app_data) = std::env::var("APPDATA") {
+            let dir = PathBuf::from(app_data).join("Velo");
+            let _ = fs::create_dir_all(&dir);
+            return dir.join("recent_projects.txt");
+        }
+
+        if let Ok(home) = std::env::var("HOME") {
+            let dir = PathBuf::from(home).join(".velo");
+            let _ = fs::create_dir_all(&dir);
+            return dir.join("recent_projects.txt");
+        }
+
+        PathBuf::from("recent_projects.txt")
+    }
+
+    fn normalize_project_key(path: &Path) -> String {
+        path.to_string_lossy().replace('\\', "/").to_lowercase()
+    }
+
+    fn load_recent_projects() -> Vec<PathBuf> {
+        let path = Self::recent_projects_file();
+        let Ok(raw) = fs::read_to_string(path) else {
+            return Vec::new();
+        };
+
+        let mut out = Vec::new();
+        for line in raw.lines() {
+            let item = line.trim();
+            if item.is_empty() {
+                continue;
+            }
+            let candidate = PathBuf::from(item);
+            if candidate.is_dir() {
+                out.push(candidate);
+            }
+            if out.len() >= RECENT_PROJECTS_LIMIT {
+                break;
+            }
+        }
+        out
+    }
+
+    fn persist_recent_projects(&self) {
+        let path = Self::recent_projects_file();
+        let body = self
+            .recent_projects
+            .iter()
+            .take(RECENT_PROJECTS_LIMIT)
+            .map(|p| p.to_string_lossy().to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let _ = fs::write(path, body);
+    }
+
+    fn remember_recent_project(&mut self, root: &Path) {
+        let key = Self::normalize_project_key(root);
+        self.recent_projects
+            .retain(|p| Self::normalize_project_key(p) != key);
+        self.recent_projects.insert(0, root.to_path_buf());
+        if self.recent_projects.len() > RECENT_PROJECTS_LIMIT {
+            self.recent_projects.truncate(RECENT_PROJECTS_LIMIT);
+        }
+        self.persist_recent_projects();
     }
 
     fn open_project_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -194,6 +264,7 @@ impl VeloIde {
     }
 
     fn load_project(&mut self, root: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        self.remember_recent_project(&root);
         self.workspace.load_project_index(root.clone(), 4000);
         self.core.clear();
         self.hover_byte = None;
@@ -707,17 +778,17 @@ impl VeloIde {
         cx.notify();
     }
     fn render_welcome(&mut self, cx: &mut Context<Self>) -> AnyElement {
-        let recent_items = if let Some(root) = self.workspace.project_root.as_ref() {
-            vec![format!("{}", root.display())]
-        } else {
-            vec![
-                "iNetVPN".to_string(),
-                "Suna_Suna_no_Mi_Datapack_1.21.4".to_string(),
-                "datapacks".to_string(),
-                "AD".to_string(),
-                "Untitled".to_string(),
-            ]
-        };
+        let recent_items: Vec<(String, PathBuf)> = self
+            .recent_projects
+            .iter()
+            .map(|path| {
+                let label = path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| path.to_string_lossy().to_string());
+                (label, path.clone())
+            })
+            .collect();
         let menu_overlay = if let Some(open_id) = self.open_menu {
             let top_menu = Self::top_menu_by_id(open_id);
             let menu_index = Self::top_menu_index(open_id);
@@ -1048,7 +1119,8 @@ impl VeloIde {
                                         div()
                                             .flex_col()
                                             .gap_1()
-                                            .children(recent_items.iter().enumerate().map(|(idx, item)| {
+                                            .children(recent_items.iter().enumerate().map(|(idx, (item, path))| {
+                                                let recent_path = path.clone();
                                                 div()
                                                     .w_full()
                                                     .h(px(36.0))
@@ -1057,6 +1129,20 @@ impl VeloIde {
                                                     .items_center()
                                                     .justify_between()
                                                     .id(("welcome-recent", idx))
+                                                    .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                                                        if recent_path.is_dir() {
+                                                            this.load_project(recent_path.clone(), window, cx);
+                                                        } else {
+                                                            this.status = format!(
+                                                                "Recent project not found: {}",
+                                                                recent_path.display()
+                                                            )
+                                                            .into();
+                                                            this.recent_projects.retain(|p| p != &recent_path);
+                                                            this.persist_recent_projects();
+                                                            cx.notify();
+                                                        }
+                                                    }))
                                                     .child(
                                                         div()
                                                             .flex()
@@ -1066,7 +1152,17 @@ impl VeloIde {
                                                             .child(item.clone()),
                                                     )
                                                     .child(div().text_color(rgb(0xA7B0C0)).child(format!("Ctrl-{}", idx + 1)))
-                                            })),
+                                            }))
+                                            .child(if recent_items.is_empty() {
+                                                div()
+                                                    .h(px(30.0))
+                                                    .px_1()
+                                                    .text_color(rgb(0x6F6F6F))
+                                                    .child("No recent projects yet")
+                                                    .into_any_element()
+                                            } else {
+                                                div().into_any_element()
+                                            }),
                                     ),
                             ),
                     ),
