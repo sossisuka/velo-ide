@@ -1,4 +1,4 @@
-use crate::ui::{
+﻿use crate::ui::{
     controller::{resolve_editor_key_action, AppMenuAction, EditorKeyAction},
     core::EditorCore,
     editor_commands, editor_geometry,
@@ -155,7 +155,7 @@ impl VeloIde {
         let mut chars = file.chars().collect::<Vec<_>>();
         if chars.len() > max_chars {
             chars.truncate(max_chars.saturating_sub(1));
-            chars.push('…');
+            chars.push('.');
         }
         chars.into_iter().collect::<String>().into()
     }
@@ -706,7 +706,6 @@ impl VeloIde {
         self.refresh_status();
         cx.notify();
     }
-
     fn render_welcome(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let recent_items = if let Some(root) = self.workspace.project_root.as_ref() {
             vec![format!("{}", root.display())]
@@ -719,182 +718,362 @@ impl VeloIde {
                 "Untitled".to_string(),
             ]
         };
-
+        let menu_overlay = if let Some(open_id) = self.open_menu {
+            let top_menu = Self::top_menu_by_id(open_id);
+            let menu_index = Self::top_menu_index(open_id);
+            let menu_left = 4.0 + (menu_index as f32 * MENU_BUTTON_WIDTH);
+            let menu_top = MENU_BAR_HEIGHT;
+            let mut submenu_rows: &'static [MenuItem] = &[];
+            let mut submenu_top = menu_top;
+            if let Some(open_submenu_id) = self.open_submenu {
+                if let Some((item_idx, item)) = top_menu
+                    .items
+                    .iter()
+                    .enumerate()
+                    .find(|(_, item)| item.id == open_submenu_id)
+                {
+                    submenu_rows = item.submenu;
+                    submenu_top = menu_top + (item_idx as f32 * MENU_ITEM_HEIGHT);
+                }
+            }
+            div()
+                .absolute()
+                .top(px(0.0))
+                .left(px(0.0))
+                .right(px(0.0))
+                .bottom(px(0.0))
+                .child(
+                    div()
+                        .absolute()
+                        .top(px(0.0))
+                        .left(px(0.0))
+                        .right(px(0.0))
+                        .bottom(px(0.0))
+                        .id("menu-click-away")
+                        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                            this.close_menu_overlay(cx);
+                        })),
+                )
+                .child(
+                    div()
+                        .id("menu-panel-main")
+                        .absolute()
+                        .top(px(menu_top))
+                        .left(px(menu_left))
+                        .w(px(MENU_PANEL_WIDTH))
+                        .bg(rgb(0x1B1D1E))
+                        .border_1()
+                        .border_color(rgb(0x2A2A2A))
+                        .rounded_sm()
+                        .overflow_hidden()
+                        .flex_col()
+                        .children(top_menu.items.iter().enumerate().map(|(idx, item)| {
+                            let has_submenu = !item.submenu.is_empty();
+                            let hovered = self.open_submenu == Some(item.id);
+                            let row_item = *item;
+                            div()
+                                .id(("menu-main-row", idx))
+                                .h(px(MENU_ITEM_HEIGHT))
+                                .px_2()
+                                .flex()
+                                .items_center()
+                                .justify_between()
+                                .bg(if hovered { rgb(0x073A5A) } else { rgb(0x1B1D1E) })
+                                .on_mouse_move(cx.listener(move |this, _: &MouseMoveEvent, _, cx| {
+                                    this.hover_menu_item(row_item, cx);
+                                }))
+                                .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                                    if let Some(cmd) = row_item.command {
+                                        this.execute_menu_command(cmd, window, cx);
+                                    } else {
+                                        this.hover_menu_item(row_item, cx);
+                                    }
+                                }))
+                                .child(div().child(item.label))
+                                .child(div().text_color(rgb(0x6F6F6F)).child(if has_submenu {
+                                    ">"
+                                } else {
+                                    item.keybinding.unwrap_or("")
+                                }))
+                        })),
+                )
+                .child(if submenu_rows.is_empty() {
+                    div().into_any_element()
+                } else {
+                    div()
+                        .id("menu-panel-sub")
+                        .absolute()
+                        .top(px(submenu_top))
+                        .left(px(menu_left + MENU_PANEL_WIDTH - 2.0))
+                        .w(px(MENU_PANEL_WIDTH))
+                        .bg(rgb(0x1B1D1E))
+                        .border_1()
+                        .border_color(rgb(0x2A2A2A))
+                        .rounded_sm()
+                        .overflow_hidden()
+                        .flex_col()
+                        .children(submenu_rows.iter().enumerate().map(|(idx, item)| {
+                            let row_item = *item;
+                            div()
+                                .id(("menu-sub-row", idx))
+                                .h(px(MENU_ITEM_HEIGHT))
+                                .px_2()
+                                .flex()
+                                .items_center()
+                                .justify_between()
+                                .bg(rgb(0x1B1D1E))
+                                .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                                    if let Some(cmd) = row_item.command {
+                                        this.execute_menu_command(cmd, window, cx);
+                                    }
+                                }))
+                                .child(div().child(item.label))
+                                .child(
+                                    div()
+                                        .text_color(rgb(0x6F6F6F))
+                                        .child(item.keybinding.unwrap_or("")),
+                                )
+                        }))
+                        .into_any_element()
+                })
+                .into_any_element()
+        } else {
+            div().into_any_element()
+        };
         div()
             .size_full()
-            .bg(rgb(0x282e3b))
-            .text_color(rgb(0xd9dee7))
-            .flex()
-            .items_center()
-            .justify_center()
+            .relative()
+            .bg(rgb(0x121212))
+            .text_color(rgb(0xCCCCCC))
             .child(
                 div()
-                    .w(px(760.0))
-                    .max_w_full()
-                    .px_4()
-                    .py_4()
+                    .size_full()
                     .flex_col()
-                    .gap_3()
                     .child(
                         div()
+                            .h(px(MENU_BAR_HEIGHT))
+                            .px_1()
                             .flex()
                             .items_center()
-                            .gap_3()
-                            .child(
+                            .gap_0()
+                            .bg(rgb(0x121212))
+                            .text_color(rgb(0x666666))
+                            .children(TOP_MENUS.iter().enumerate().map(|(menu_idx, menu)| {
+                                let is_open = self.open_menu == Some(menu.id);
                                 div()
-                                    .w(px(54.0))
-                                    .h(px(54.0))
-                                    .rounded_md()
-                                    .border_1()
-                                    .border_color(rgb(0xb8c0ce))
+                                    .id(("menubar-item", menu_idx))
+                                    .w(px(MENU_BUTTON_WIDTH))
+                                    .h(px(MENU_BAR_HEIGHT))
+                                    .px_2()
                                     .flex()
                                     .items_center()
                                     .justify_center()
-                                    .text_color(rgb(0xb8c0ce))
-                                    .child("V"),
-                            )
+                                    .bg(if is_open { rgb(0x073A5A) } else { rgb(0x121212) })
+                                    .on_mouse_move(cx.listener({
+                                        let id = menu.id;
+                                        move |this, _: &MouseMoveEvent, _, cx| {
+                                            this.hover_top_menu(id, cx);
+                                        }
+                                    }))
+                                    .on_click(cx.listener({
+                                        let id = menu.id;
+                                        move |this, _: &ClickEvent, _, cx| {
+                                            this.click_top_menu(id, cx);
+                                        }
+                                    }))
+                                    .child(menu.label)
+                            })),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .flex()
+                            .items_center()
+                            .justify_center()
                             .child(
                                 div()
+                                    .w(px(760.0))
+                                    .max_w_full()
+                                    .px_4()
+                                    .py_4()
                                     .flex_col()
-                                    .gap_1()
-                                    .child("Welcome back to Velo")
+                                    .gap_3()
                                     .child(
                                         div()
-                                            .text_color(rgb(0xb8c0ce))
-                                            .italic()
-                                            .child("The editor for what's next"),
+                                            .flex()
+                                            .items_center()
+                                            .gap_3()
+                                            .child(
+                                                div()
+                                                    .w(px(54.0))
+                                                    .h(px(54.0))
+                                                    .rounded_md()
+                                                    .border_1()
+                                                    .border_color(rgb(0xB8C0CE))
+                                                    .flex()
+                                                    .items_center()
+                                                    .justify_center()
+                                                    .text_color(rgb(0xB8C0CE))
+                                                    .child("V"),
+                                            )
+                                            .child(
+                                                div()
+                                                    .flex_col()
+                                                    .gap_1()
+                                                    .child("Welcome back to Velo")
+                                                    .child(
+                                                        div()
+                                                            .text_color(rgb(0x9EA7B8))
+                                                            .italic()
+                                                            .child("The editor for what's next"),
+                                                    ),
+                                            ),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .items_center()
+                                            .gap_2()
+                                            .child(div().text_color(rgb(0x9EA7B8)).child("GET STARTED"))
+                                            .child(div().flex_1().h(px(1.0)).bg(rgb(0x2A2A2A))),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex_col()
+                                            .gap_1()
+                                            .child(
+                                                div()
+                                                    .w_full()
+                                                    .h(px(36.0))
+                                                    .px_1()
+                                                    .flex()
+                                                    .items_center()
+                                                    .justify_between()
+                                                    .id("welcome-new-buffer")
+                                                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                                                        this.core.clear();
+                                                        this.screen = Screen::Editor;
+                                                        this.status = "New buffer".into();
+                                                        cx.notify();
+                                                    }))
+                                                    .child(
+                                                        div()
+                                                            .flex()
+                                                            .items_center()
+                                                            .gap_2()
+                                                            .child(img(self.icons.add()).size(px(14.0)))
+                                                            .child("New File"),
+                                                    )
+                                                    .child(div().text_color(rgb(0xA7B0C0)).child("Ctrl-N")),
+                                            )
+                                            .child(
+                                                div()
+                                                    .w_full()
+                                                    .h(px(36.0))
+                                                    .px_1()
+                                                    .flex()
+                                                    .items_center()
+                                                    .justify_between()
+                                                    .id("welcome-open-folder")
+                                                    .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                                                        this.open_project_dialog(window, cx);
+                                                    }))
+                                                    .child(
+                                                        div()
+                                                            .flex()
+                                                            .items_center()
+                                                            .gap_2()
+                                                            .child(img(self.icons.folder_open()).size(px(14.0)))
+                                                            .child("Open Project"),
+                                                    )
+                                                    .child(div().text_color(rgb(0xA7B0C0)).child("Ctrl-K  Ctrl-O")),
+                                            )
+                                            .child(
+                                                div()
+                                                    .w_full()
+                                                    .h(px(36.0))
+                                                    .px_1()
+                                                    .flex()
+                                                    .items_center()
+                                                    .justify_between()
+                                                    .id("welcome-clone")
+                                                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                                                        this.status = "Clone Repository is not implemented yet".into();
+                                                        cx.notify();
+                                                    }))
+                                                    .child(
+                                                        div()
+                                                            .flex()
+                                                            .items_center()
+                                                            .gap_2()
+                                                            .child(">")
+                                                            .child("Clone Repository"),
+                                                    )
+                                                    .child(div().text_color(rgb(0xA7B0C0)).child("")),
+                                            )
+                                            .child(
+                                                div()
+                                                    .w_full()
+                                                    .h(px(36.0))
+                                                    .px_1()
+                                                    .flex()
+                                                    .items_center()
+                                                    .justify_between()
+                                                    .id("welcome-command-palette")
+                                                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                                                        this.status = "Command Palette is not implemented yet".into();
+                                                        cx.notify();
+                                                    }))
+                                                    .child(
+                                                        div()
+                                                            .flex()
+                                                            .items_center()
+                                                            .gap_2()
+                                                            .child(">")
+                                                            .child("Open Command Palette"),
+                                                    )
+                                                    .child(div().text_color(rgb(0xA7B0C0)).child("Ctrl-Shift-P")),
+                                            ),
+                                    )
+                                    .child(
+                                        div()
+                                            .mt_2()
+                                            .flex()
+                                            .items_center()
+                                            .gap_2()
+                                            .child(div().text_color(rgb(0x9EA7B8)).child("RECENT PROJECTS"))
+                                            .child(div().flex_1().h(px(1.0)).bg(rgb(0x2A2A2A))),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex_col()
+                                            .gap_1()
+                                            .children(recent_items.iter().enumerate().map(|(idx, item)| {
+                                                div()
+                                                    .w_full()
+                                                    .h(px(36.0))
+                                                    .px_1()
+                                                    .flex()
+                                                    .items_center()
+                                                    .justify_between()
+                                                    .id(("welcome-recent", idx))
+                                                    .child(
+                                                        div()
+                                                            .flex()
+                                                            .items_center()
+                                                            .gap_2()
+                                                            .child(img(self.icons.folder()).size(px(14.0)))
+                                                            .child(item.clone()),
+                                                    )
+                                                    .child(div().text_color(rgb(0xA7B0C0)).child(format!("Ctrl-{}", idx + 1)))
+                                            })),
                                     ),
                             ),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .child(div().text_color(rgb(0x9ea7b8)).child("GET STARTED"))
-                            .child(div().flex_1().h(px(1.0)).bg(rgb(0x404a5d))),
-                    )
-                    .child(
-                        div()
-                            .flex_col()
-                            .gap_1()
-                            .child(
-                                div()
-                                    .w_full()
-                                    .h(px(36.0))
-                                    .px_1()
-                                    .flex()
-                                    .items_center()
-                                    .justify_between()
-                                    .id("welcome-new-buffer")
-                                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                                        this.core.clear();
-                                        this.screen = Screen::Editor;
-                                        this.status = "New buffer".into();
-                                        cx.notify();
-                                    }))
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .items_center()
-                                            .gap_2()
-                                            .child(img(self.icons.add()).size(px(14.0)))
-                                            .child("New File"),
-                                    )
-                                    .child(div().text_color(rgb(0xa7b0c0)).child("Ctrl-N")),
-                            )
-                            .child(
-                                div()
-                                    .w_full()
-                                    .h(px(36.0))
-                                    .px_1()
-                                    .flex()
-                                    .items_center()
-                                    .justify_between()
-                                    .id("welcome-open-folder")
-                                    .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
-                                        this.open_project_dialog(window, cx);
-                                    }))
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .items_center()
-                                            .gap_2()
-                                            .child(img(self.icons.folder_open()).size(px(14.0)))
-                                            .child("Open Project"),
-                                    )
-                                    .child(div().text_color(rgb(0xa7b0c0)).child("Ctrl-K  Ctrl-O")),
-                            )
-                            .child(
-                                div()
-                                    .w_full()
-                                    .h(px(36.0))
-                                    .px_1()
-                                    .flex()
-                                    .items_center()
-                                    .justify_between()
-                                    .id("welcome-clone")
-                                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                                        this.status = "Clone Repository is not implemented yet".into();
-                                        cx.notify();
-                                    }))
-                                    .child(div().flex().items_center().gap_2().child("↪").child("Clone Repository"))
-                                    .child(div().text_color(rgb(0xa7b0c0)).child("")),
-                            )
-                            .child(
-                                div()
-                                    .w_full()
-                                    .h(px(36.0))
-                                    .px_1()
-                                    .flex()
-                                    .items_center()
-                                    .justify_between()
-                                    .id("welcome-command-palette")
-                                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                                        this.status = "Command Palette is not implemented yet".into();
-                                        cx.notify();
-                                    }))
-                                    .child(div().flex().items_center().gap_2().child("⌘").child("Open Command Palette"))
-                                    .child(div().text_color(rgb(0xa7b0c0)).child("Ctrl-Shift-P")),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .mt_2()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .child(div().text_color(rgb(0x9ea7b8)).child("RECENT PROJECTS"))
-                            .child(div().flex_1().h(px(1.0)).bg(rgb(0x404a5d))),
-                    )
-                    .child(
-                        div()
-                            .flex_col()
-                            .gap_1()
-                            .children(recent_items.iter().enumerate().map(|(idx, item)| {
-                                div()
-                                    .w_full()
-                                    .h(px(36.0))
-                                    .px_1()
-                                    .flex()
-                                    .items_center()
-                                    .justify_between()
-                                    .id(("welcome-recent", idx))
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .items_center()
-                                            .gap_2()
-                                            .child(img(self.icons.folder()).size(px(14.0)))
-                                            .child(item.clone()),
-                                    )
-                                    .child(div().text_color(rgb(0xa7b0c0)).child(format!("Ctrl-{}", idx + 1)))
-                            })),
                     ),
             )
+            .child(menu_overlay)
             .into_any_element()
     }
-
     fn render_workspace(&mut self, cx: &mut Context<Self>, window: &mut Window) -> AnyElement {
         let viewport_w = f32::from(window.viewport_size().width);
         let viewport_h = f32::from(window.viewport_size().height);
@@ -1850,5 +2029,6 @@ impl Render for VeloIde {
         }
     }
 }
+
 
 
