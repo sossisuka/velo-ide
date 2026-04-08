@@ -828,6 +828,7 @@ impl VeloIde {
                     .child(
                         div()
                             .flex_1()
+                            .w_full()
                             .flex()
                             .items_center()
                             .justify_center()
@@ -849,8 +850,7 @@ impl VeloIde {
                                                     .w(px(54.0))
                                                     .h(px(54.0))
                                                     .rounded_md()
-                                                    .border_1()
-                                                    .border_color(rgb(0xB8C0CE))
+                                                    .bg(rgb(0x1A1F2A))
                                                     .flex()
                                                     .items_center()
                                                     .justify_center()
