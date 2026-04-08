@@ -4,6 +4,7 @@ pub enum TopMenuId {
     Edit,
     Selection,
     View,
+    Terminal,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -27,6 +28,8 @@ pub enum MenuCommand {
     ZoomIn,
     ZoomOut,
     ZoomReset,
+    ToggleTerminalPanel,
+    ClearTerminal,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -200,6 +203,23 @@ const VIEW_ITEMS: &[MenuItem] = &[
     },
 ];
 
+const TERMINAL_ITEMS: &[MenuItem] = &[
+    MenuItem {
+        id: "terminal.toggle",
+        label: "Toggle Panel",
+        command: Some(MenuCommand::ToggleTerminalPanel),
+        keybinding: Some("Ctrl+J"),
+        submenu: &[],
+    },
+    MenuItem {
+        id: "terminal.clear",
+        label: "Clear Terminal",
+        command: Some(MenuCommand::ClearTerminal),
+        keybinding: None,
+        submenu: &[],
+    },
+];
+
 pub const TOP_MENUS: &[TopMenu] = &[
     TopMenu {
         id: TopMenuId::File,
@@ -220,5 +240,10 @@ pub const TOP_MENUS: &[TopMenu] = &[
         id: TopMenuId::View,
         label: "View",
         items: VIEW_ITEMS,
+    },
+    TopMenu {
+        id: TopMenuId::Terminal,
+        label: "Terminal",
+        items: TERMINAL_ITEMS,
     },
 ];

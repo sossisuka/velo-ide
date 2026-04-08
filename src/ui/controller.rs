@@ -22,6 +22,8 @@ pub enum AppMenuAction {
     ZoomIn,
     ZoomOut,
     ZoomReset,
+    ToggleTerminalPanel,
+    ClearTerminal,
 }
 
 impl From<MenuCommand> for AppMenuAction {
@@ -46,6 +48,8 @@ impl From<MenuCommand> for AppMenuAction {
             MenuCommand::ZoomIn => Self::ZoomIn,
             MenuCommand::ZoomOut => Self::ZoomOut,
             MenuCommand::ZoomReset => Self::ZoomReset,
+            MenuCommand::ToggleTerminalPanel => Self::ToggleTerminalPanel,
+            MenuCommand::ClearTerminal => Self::ClearTerminal,
         }
     }
 }

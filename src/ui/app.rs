@@ -19,7 +19,8 @@ use std::{
 };
 
 use gpui::{
-    div, img, px, rgb, AnyElement, ClickEvent, Context, FocusHandle, HighlightStyle,
+    div, font, img, px, rgb, AnyElement, ClickEvent, Context, FocusHandle, Font, FontFallbacks,
+    HighlightStyle,
     InteractiveElement, IntoElement, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
     MouseUpEvent, ParentElement, Render, ScrollDelta, ScrollWheelEvent, SharedString,
     StatefulInteractiveElement, Styled, StyledText, Window,
@@ -94,6 +95,18 @@ impl Icons {
     fn activity_extensions(&self) -> PathBuf {
         self.activity_png("plus")
     }
+
+    fn terminal(&self) -> PathBuf {
+        self.activity_png("menu")
+    }
+
+    fn terminal_clear(&self) -> PathBuf {
+        self.activity_png("trash")
+    }
+
+    fn terminal_run(&self) -> PathBuf {
+        self.activity_png("play")
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -146,6 +159,9 @@ pub struct VeloIde {
     open_submenu: Option<&'static str>,
     status: SharedString,
     recent_projects: Vec<PathBuf>,
+    terminal_open: bool,
+    terminal_height: f32,
+    terminal_lines: Vec<SharedString>,
 }
 
 impl VeloIde {
@@ -185,6 +201,38 @@ impl VeloIde {
             open_submenu: None,
             status: "Ready".into(),
             recent_projects,
+            terminal_open: false,
+            terminal_height: 210.0,
+            terminal_lines: vec![
+                "Velo Terminal ready".into(),
+                "PS D:\\Projects\\VeloCode>".into(),
+            ],
+        }
+    }
+
+    fn base_ui_font() -> Font {
+        let mut f = font("Poppins");
+        f.fallbacks = Some(FontFallbacks::from_fonts(vec!["Montserrat".to_string()]));
+        f
+    }
+
+    fn cyrillic_ui_font() -> Font {
+        let mut f = font("Montserrat");
+        f.fallbacks = Some(FontFallbacks::from_fonts(vec!["Poppins".to_string()]));
+        f
+    }
+
+    fn has_cyrillic(text: &str) -> bool {
+        text.chars().any(|c| {
+            ('\u{0400}'..='\u{04FF}').contains(&c) || ('\u{0500}'..='\u{052F}').contains(&c)
+        })
+    }
+
+    fn localized_ui_font(text: &str) -> Font {
+        if Self::has_cyrillic(text) {
+            Self::cyrillic_ui_font()
+        } else {
+            Self::base_ui_font()
         }
     }
 
@@ -605,6 +653,19 @@ impl VeloIde {
     }
 
     fn click_top_menu(&mut self, id: TopMenuId, cx: &mut Context<Self>) {
+        if id == TopMenuId::Terminal {
+            self.terminal_open = !self.terminal_open;
+            self.status = if self.terminal_open {
+                "Terminal panel opened".into()
+            } else {
+                "Terminal panel hidden".into()
+            };
+            self.open_menu = None;
+            self.open_submenu = None;
+            cx.notify();
+            return;
+        }
+
         if self.open_menu == Some(id) {
             self.open_menu = None;
             self.open_submenu = None;
@@ -707,6 +768,20 @@ impl VeloIde {
             AppMenuAction::ZoomReset => {
                 self.status = "Reset Zoom is not implemented yet".into();
             }
+            AppMenuAction::ToggleTerminalPanel => {
+                self.terminal_open = !self.terminal_open;
+                self.status = if self.terminal_open {
+                    "Terminal panel opened".into()
+                } else {
+                    "Terminal panel hidden".into()
+                };
+            }
+            AppMenuAction::ClearTerminal => {
+                self.terminal_lines.clear();
+                self.terminal_lines.push("Terminal cleared".into());
+                self.terminal_lines.push("PS D:\\Projects\\VeloCode>".into());
+                self.status = "Terminal cleared".into();
+            }
         }
 
         self.open_menu = None;
@@ -796,6 +871,7 @@ impl VeloIde {
             .relative()
             .bg(rgb(0x121212))
             .text_color(rgb(0xCCCCCC))
+            .font(Self::base_ui_font())
             .child(
                 div()
                     .size_full()
@@ -989,9 +1065,10 @@ impl VeloIde {
                                         div()
                                             .flex_col()
                                             .gap_1()
-                                            .children(recent_items.iter().enumerate().map(|(idx, (item, path))| {
-                                                let recent_path = path.clone();
-                                                div()
+                            .children(recent_items.iter().enumerate().map(|(idx, (item, path))| {
+                                let recent_path = path.clone();
+                                let item_font = Self::localized_ui_font(item);
+                                div()
                                                     .w_full()
                                                     .h(px(36.0))
                                                     .px_1()
@@ -1018,9 +1095,9 @@ impl VeloIde {
                                                             .flex()
                                                             .items_center()
                                                             .gap_2()
-                                                            .child(img(self.icons.folder()).size(px(14.0)))
-                                                            .child(item.clone()),
-                                                    )
+                                            .child(img(self.icons.folder()).size(px(14.0)))
+                                            .child(div().font(item_font).child(item.clone())),
+                                    )
                                                     .child(div().text_color(rgb(0xA7B0C0)).child(format!("Ctrl-{}", idx + 1)))
                                             }))
                                             .child(if recent_items.is_empty() {
@@ -1174,6 +1251,14 @@ impl VeloIde {
                 )
             }),
         );
+        let terminal_text: SharedString = self
+            .terminal_lines
+            .iter()
+            .map(|s| s.to_string())
+            .collect::<Vec<_>>()
+            .join("\n")
+            .into();
+        let status_font = Self::localized_ui_font(self.status.as_ref());
         let (editor_thumb_h, editor_thumb_top, editor_scrollable) = scrollbar_metrics(
             editor_view.line_count,
             editor_view.visible_rows,
@@ -1339,6 +1424,7 @@ impl VeloIde {
             .relative()
             .bg(rgb(0x121212))
             .text_color(rgb(0xCCCCCC))
+            .font(Self::base_ui_font())
             .child(
                 div()
                     .size_full()
@@ -1818,6 +1904,105 @@ impl VeloIde {
                                             ),
                                     ),
                             )
+                            .child(if self.terminal_open {
+                                div()
+                                    .h(px(self.terminal_height))
+                                    .rounded_md()
+                                    .overflow_hidden()
+                                    .bg(rgb(0x0F1116))
+                                    .border_t_1()
+                                    .border_color(rgb(0x2A2A2A))
+                                    .flex_col()
+                                    .child(
+                                        div()
+                                            .h(px(32.0))
+                                            .px_3()
+                                            .flex()
+                                            .items_center()
+                                            .justify_between()
+                                            .bg(rgb(0x161A22))
+                                            .child(
+                                                div()
+                                                    .flex()
+                                                    .items_center()
+                                                    .gap_2()
+                                                    .child(img(self.icons.terminal()).size(px(14.0)))
+                                                    .child(div().text_color(rgb(0xC5C5C5)).child("Terminal")),
+                                            )
+                                            .child(
+                                                div()
+                                                    .flex()
+                                                    .items_center()
+                                                    .gap_2()
+                                                    .child(
+                                                        div()
+                                                            .w(px(22.0))
+                                                            .h(px(22.0))
+                                                            .rounded_sm()
+                                                            .flex()
+                                                            .items_center()
+                                                            .justify_center()
+                                                            .bg(rgb(0x121212))
+                                                            .id("terminal-run")
+                                                            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                                                                this.terminal_lines.push("PS D:\\Projects\\VeloCode> running (stub)".into());
+                                                                this.status = "Terminal run invoked".into();
+                                                                cx.notify();
+                                                            }))
+                                                            .child(img(self.icons.terminal_run()).size(px(11.0))),
+                                                    )
+                                                    .child(
+                                                        div()
+                                                            .w(px(22.0))
+                                                            .h(px(22.0))
+                                                            .rounded_sm()
+                                                            .flex()
+                                                            .items_center()
+                                                            .justify_center()
+                                                            .bg(rgb(0x121212))
+                                                            .id("terminal-clear")
+                                                            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                                                                this.terminal_lines.clear();
+                                                                this.terminal_lines.push("Terminal cleared".into());
+                                                                this.terminal_lines.push("PS D:\\Projects\\VeloCode>".into());
+                                                                this.status = "Terminal cleared".into();
+                                                                cx.notify();
+                                                            }))
+                                                            .child(img(self.icons.terminal_clear()).size(px(11.0))),
+                                                    )
+                                                    .child(
+                                                        div()
+                                                            .w(px(22.0))
+                                                            .h(px(22.0))
+                                                            .rounded_sm()
+                                                            .flex()
+                                                            .items_center()
+                                                            .justify_center()
+                                                            .bg(rgb(0x121212))
+                                                            .id("terminal-close")
+                                                            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                                                                this.terminal_open = false;
+                                                                this.status = "Terminal panel hidden".into();
+                                                                cx.notify();
+                                                            }))
+                                                            .child(img(self.icons.close_tab()).size(px(11.0))),
+                                                    ),
+                                            ),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .overflow_hidden()
+                                            .px_3()
+                                            .py_2()
+                                            .text_color(rgb(0xC9D1D9))
+                                            .font_family("Consolas")
+                                            .child(terminal_text),
+                                    )
+                                    .into_any_element()
+                            } else {
+                                div().into_any_element()
+                            })
                             .child(
                                 div()
                                     .h(px(24.0))
@@ -1828,7 +2013,7 @@ impl VeloIde {
                                     .justify_between()
                                     .bg(rgb(0x121212))
                                     .text_color(rgb(0x6F6F6F))
-                                    .child(self.status.clone())
+                                    .child(div().font(status_font).child(self.status.clone()))
                                     .child(format!("{} lines | {} | GPUI", line_count, active_language)),
                             ),
                     ),
